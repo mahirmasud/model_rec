@@ -199,19 +199,6 @@ The system automatically converts feature-engineered datasets into RecBole-compa
 - `.item` files for item features
 - Sequence datasets for SASRec
 
-### Intelligent Feature Mapping
-
-Engineered features are automatically mapped to appropriate model layers:
-
-| Feature Type | LightGCN | SASRec | DeepFM |
-|-------------|----------|--------|--------|
-| Graph interactions | ✓ | | |
-| Session sequences | | ✓ | |
-| Temporal features | | ✓ | ✓ |
-| User demographics | | | ✓ |
-| Item attributes | | | ✓ |
-| Behavioral clusters | ✓ | ✓ | ✓ |
-
 ### Diversity-Aware Re-ranking
 
 Implements Maximum Marginal Relevance (MMR) with:
@@ -264,35 +251,6 @@ recommendations = engine.get_recommendations(
 python main.py --config config/pipeline_config.yaml --mode incremental --new_data data/raw/new_interactions.parquet
 ```
 
-## Performance Optimization
-
-### For Large-Scale Deployment
-
-1. **Enable GPU Acceleration**
-   ```yaml
-   training:
-     use_gpu: true
-     gpu_id: 0
-   ```
-
-2. **Use ANN Retrieval**
-   ```yaml
-   retrieval:
-     use_ann: true
-     ann_index_type: "IVF_PQ"
-   ```
-
-3. **Batch Inference**
-   ```python
-   recommendations = engine.batch_recommend(user_ids, batch_size=1024)
-   ```
-
-4. **Embedding Caching**
-   ```yaml
-   serving:
-     cache_embeddings: true
-     cache_ttl: 3600
-   ```
 
 ## Evaluation Metrics
 
