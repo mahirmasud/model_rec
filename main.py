@@ -101,7 +101,8 @@ def run_pipeline(config: ConfigLoader, mode: str, args):
     
     try:
         # Stage 0: Data Preparation
-        if mode in ['full', 'prepare']:
+        prep_required_modes = ['full', 'prepare', 'retrieve', 'personalize', 'rank']
+        if mode in prep_required_modes:
             with StageLogger(logger, "Data Preparation"):
                 builder = DatasetBuilder(config, logger)
                 builder.load_data()
@@ -110,10 +111,15 @@ def run_pipeline(config: ConfigLoader, mode: str, args):
                 
                 mapper = FeatureMapper(config, logger)
                 interactions, user_features, item_features = builder.merge_features()
-                
+
                 lightgcn_data = mapper.map_for_lightgcn(interactions, user_features, item_features)
-                sasrec_data = mapper.map_for_sasrec(interactions)
-                deepfm_data = mapper.map_for_deepfm(interactions, user_features, item_features)
+                sasrec_data = mapper.map_for_sasrec(interactions) if 'timestamp' in interactions.columns else None
+                deepfm_data = mapper.map_for_deepfm(
+                    interactions,
+                    user_features,
+                    item_features,
+                    feature_matrix=getattr(builder, 'feature_matrix_df', None)
+                )
                 
                 converter = RecBoleConverter(config, logger)
                 inter_dir = config.get('data.inter_dir', 'data/inter')
@@ -143,7 +149,10 @@ def run_pipeline(config: ConfigLoader, mode: str, args):
         if mode in ['full', 'personalize']:
             with StageLogger(logger, "SASRec Personalization"):
                 from src.sequential.sasrec_personalizer import SASRecPersonalizer
-                
+
+                if sasrec_data is None:
+                    raise ValueError('SASRec stage requires a timestamp column in interaction data.')
+
                 personalizer = SASRecPersonalizer(config, logger)
                 personalized_results = personalizer.run(sasrec_data)
                 results['personalization'] = personalized_results
