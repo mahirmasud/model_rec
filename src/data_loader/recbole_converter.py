@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
 
-from ..utils.helpers import save_parquet, save_json, ensure_dir
+from ..utils.helpers import save_parquet, save_json, ensure_dir, detect_field
 from ..utils.config_loader import ConfigLoader
 
 
@@ -33,6 +33,22 @@ class RecBoleConverter:
         self.dataset_name = name
         return self
     
+    def _recbole_typed_name(self, column: str, series: pd.Series) -> str:
+        """Create RecBole typed field names preserving arbitrary columns."""
+        if column.endswith(":token") or column.endswith(":float") or column.endswith(":token_seq"):
+            return column
+
+        if np.issubdtype(series.dtype, np.datetime64):
+            return f"{column}:float"
+        if np.issubdtype(series.dtype, np.number):
+            return f"{column}:float"
+        return f"{column}:token"
+
+    def _coerce_series_for_export(self, series: pd.Series) -> pd.Series:
+        if np.issubdtype(series.dtype, np.datetime64):
+            return (series.astype("int64") // 10**9).astype("float64")
+        return series
+
     def convert_interactions(self, interactions: pd.DataFrame, 
                              output_dir: str) -> Dict[str, Any]:
         """
@@ -56,19 +72,14 @@ class RecBoleConverter:
             if col not in df.columns:
                 raise ValueError(f"Missing required column: {col}")
         
-        # Standardize column names for RecBole
-        rename_map = {}
         if 'rating' not in df.columns:
             df['rating'] = 1
-        
-        # Convert to RecBole format
+
+        # Convert to RecBole format with typed fields, preserving arbitrary columns
         recbole_df = pd.DataFrame()
-        recbole_df['user_id'] = df['user_id']
-        recbole_df['item_id'] = df['item_id']
-        recbole_df['rating'] = df['rating']
-        
-        if 'timestamp' in df.columns:
-            recbole_df['timestamp'] = df['timestamp'].astype(np.int64) // 10**9
+        for col in df.columns:
+            typed_col = self._recbole_typed_name(col, df[col])
+            recbole_df[typed_col] = self._coerce_series_for_export(df[col])
         
         # Save as .inter file (tab-separated)
         inter_file = output_path / f"{self.dataset_name}.inter"
@@ -94,6 +105,8 @@ class RecBoleConverter:
         if 'timestamp' in df.columns:
             dataset_config['fields']['timestamp'] = {'type': 'float', 'sep': '\t'}
             dataset_config['time_field'] = 'timestamp'
+
+        dataset_config['exported_columns'] = list(recbole_df.columns)
         
         # Save dataset config
         config_file = output_path / f"{self.dataset_name}.yaml"
@@ -109,8 +122,11 @@ class RecBoleConverter:
         
         df = user_features.copy()
         
-        if 'user_id' not in df.columns:
+        user_id_col = detect_field(df, 'user_id')
+        if not user_id_col:
             raise ValueError("user_id column required")
+        if user_id_col != 'user_id':
+            df = df.rename(columns={user_id_col: 'user_id'})
         
         # Identify feature types
         feature_cols = [c for c in df.columns if c != 'user_id']
@@ -134,8 +150,11 @@ class RecBoleConverter:
         
         df = item_features.copy()
         
-        if 'item_id' not in df.columns:
+        item_id_col = detect_field(df, 'item_id')
+        if not item_id_col:
             raise ValueError("item_id column required")
+        if item_id_col != 'item_id':
+            df = df.rename(columns={item_id_col: 'item_id'})
         
         feature_cols = [c for c in df.columns if c != 'item_id']
         
