@@ -102,9 +102,9 @@ def detect_field(
     """
     # Default candidates by field type
     default_candidates = {
-        'user_id': ['USER_ID', 'user_id', 'uid', 'user', 'customer_id', 'client_id'],
-        'item_id': ['ITEM_ID', 'item_id', 'iid', 'item', 'product_id', 'article_id'],
-        'timestamp': ['TIMESTAMP', 'timestamp', 'time', 'date', 'created_at', 'event_time'],
+        'user_id': ['USER_ID', 'user_id', 'uid', 'user', 'customer_id', 'client_id', 'member_id', 'account_id', 'visitor_id', 'profile_id'],
+        'item_id': ['ITEM_ID', 'item_id', 'iid', 'item', 'product_id', 'article_id', 'sku', 'sku_id', 'asin', 'content_id', 'listing_id'],
+        'timestamp': ['TIMESTAMP', 'timestamp', 'time', 'date', 'created_at', 'event_time', 'datetime', 'event_timestamp', 'ts'],
         'interaction': ['INTERACTION', 'interaction', 'rating', 'label', 'click', 'purchase', 'score'],
         'session_id': ['SESSION_ID', 'session_id', 'sid', 'session'],
         'event_type': ['EVENT_TYPE', 'event_type', 'event', 'action', 'behavior']
@@ -126,6 +126,41 @@ def detect_field(
             if candidate.lower() in col_lower or candidate in col_upper:
                 return col
     
+
+    # Heuristic fallback for unknown schemas
+    lowered = {c.lower(): c for c in df.columns}
+
+    if field_type in {'user_id', 'item_id'}:
+        priority_tokens = ['user', 'customer', 'client', 'member', 'account', 'visitor', 'profile'] if field_type == 'user_id' else ['item', 'product', 'sku', 'article', 'asin', 'content', 'listing']
+        for col in df.columns:
+            col_l = col.lower()
+            if any(tok in col_l for tok in priority_tokens) and ('id' in col_l or col_l.endswith('_key')):
+                return col
+
+        # fallback: choose high-cardinality non-temporal column likely an identifier
+        n_rows = max(len(df), 1)
+        best_col = None
+        best_score = -1
+        for col in df.columns:
+            series = df[col]
+            if np.issubdtype(series.dtype, np.datetime64):
+                continue
+            col_l = col.lower()
+            if any(t in col_l for t in ['time', 'date']):
+                continue
+            nunique = series.nunique(dropna=True)
+            score = nunique / n_rows
+            if score > best_score and 0.01 <= score <= 0.999:
+                best_score = score
+                best_col = col
+        return best_col
+
+    if field_type == 'timestamp':
+        # already attempted aliases; then try datetime-like dtypes
+        for col in df.columns:
+            if np.issubdtype(df[col].dtype, np.datetime64):
+                return col
+
     return None
 
 

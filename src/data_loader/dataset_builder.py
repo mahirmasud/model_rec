@@ -122,9 +122,16 @@ class DatasetBuilder:
         # Detect user ID
         self.user_id_col = detect_field(df, 'user_id', self.field_mapping.get('user_id'))
         self.logger.info(f"Detected user_id column: {self.user_id_col}")
-        
+
         # Detect item ID
         self.item_id_col = detect_field(df, 'item_id', self.field_mapping.get('item_id'))
+        if self.item_id_col == self.user_id_col:
+            alt_item_cols = [
+                c for c in df.columns
+                if c != self.user_id_col and any(t in c.lower() for t in ['item', 'product', 'sku', 'article', 'asin', 'content', 'listing'])
+            ]
+            if alt_item_cols:
+                self.item_id_col = alt_item_cols[0]
         self.logger.info(f"Detected item_id column: {self.item_id_col}")
         
         # Detect timestamp
@@ -139,6 +146,11 @@ class DatasetBuilder:
         self.session_id_col = detect_field(df, 'session_id', self.field_mapping.get('session_id'))
         
         # Validate required fields
+        if not self.user_id_col and self.item_id_col:
+            alternatives = [c for c in df.columns if c != self.item_id_col]
+            if alternatives:
+                self.user_id_col = max(alternatives, key=lambda c: df[c].nunique(dropna=True))
+
         if not all([self.user_id_col, self.item_id_col]):
             raise ValueError("Could not detect required user_id and item_id columns")
         
