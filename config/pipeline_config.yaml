@@ -1,0 +1,334 @@
+# Main Pipeline Configuration
+# Industrial Multi-Stage Recommendation System
+
+# Data paths
+data:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  inter_dir: "data/inter"
+  output_dir: "outputs"
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  
+  # Input files
+  input_files:
+    cleaned_dataset: "cleaned_dataset.parquet"
+    feature_matrix: "feature_matrix.parquet"
+    feature_definitions: "feature_definitions.json"
+    metadata: "metadata.json"
+    session_features: "session_features.parquet"
+    interaction_features: "interaction_features.parquet"
+    temporal_features: "temporal_features.parquet"
+    user_features: "user_features.parquet"
+    item_features: "item_features.parquet"
+
+# Field mappings (auto-detected if not specified)
+field_mapping:
+  user_id: ["USER_ID", "user_id", "uid", "user"]
+  item_id: ["ITEM_ID", "item_id", "iid", "item", "product_id"]
+  timestamp: ["TIMESTAMP", "timestamp", "time", "date", "created_at"]
+  interaction: ["INTERACTION", "interaction", "rating", "label", "click", "purchase"]
+  session_id: ["SESSION_ID", "session_id", "sid", "session"]
+  event_type: ["EVENT_TYPE", "event_type", "event", "action"]
+
+# LightGCN Retrieval Layer Configuration
+retrieval:
+  model: "LightGCN"
+  
+  # Model architecture
+  embedding_dim: 64
+  n_layers: 3
+  reg_weight: 1.0e-4
+  
+  # Training
+  learning_rate: 0.001
+  batch_size: 2048
+  epochs: 50
+  weight_decay: 1.0e-5
+  
+  # Negative sampling
+  neg_sampling:
+    enabled: true
+    sample_count: 1
+    strategy: "uniform"  # uniform, popularity_corrected
+  
+  # Retrieval settings
+  top_k: 500  # Number of candidates to retrieve
+  use_ann: false  # Enable ANN for large-scale
+  ann_index_type: "IVF_PQ"
+  ann_nprobe: 10
+  
+  # Graph settings
+  graph:
+    normalize_adjacency: true
+    self_loops: false
+    edge_dropout: 0.1
+  
+  # Bias mitigation
+  bias_mitigation:
+    enabled: true
+    popularity_decay: 0.5
+    inverse_propensity_weighting: true
+
+# SASRec Sequential Personalization Layer
+sequential:
+  model: "SASRec"
+  
+  # Model architecture
+  hidden_size: 128
+  num_heads: 4
+  num_blocks: 2
+  dropout_rate: 0.1
+  
+  # Sequence settings
+  max_seq_length: 50
+  min_seq_length: 5
+  padding: "right"  # left or right
+  
+  # Training
+  learning_rate: 0.001
+  batch_size: 512
+  epochs: 100
+  weight_decay: 1.0e-5
+  
+  # Attention settings
+  attention:
+    causal_mask: true
+    layer_norm: true
+    residual_connection: true
+  
+  # Session handling
+  session:
+    session_timeout_minutes: 30
+    min_session_length: 2
+    handle_anonymous: true
+  
+  # Personalization
+  top_k: 100  # Candidates after personalization
+  recency_weight: 1.5  # Weight for recent interactions
+
+# DeepFM Ranking Layer
+ranking:
+  model: "DeepFM"
+  
+  # Model architecture
+  embedding_dim: 32
+  mlp_hidden_sizes: [128, 64, 32]
+  dropout_rates: [0.3, 0.3, 0.3]
+  
+  # FM component
+  fm:
+    enabled: true
+  
+  # Deep component
+  deep:
+    activation: "relu"
+    batch_norm: true
+    use_wide: true
+  
+  # Training
+  learning_rate: 0.001
+  batch_size: 256
+  epochs: 50
+  weight_decay: 1.0e-5
+  
+  # Feature settings
+  features:
+    dense_features: []  # Auto-detected from feature_matrix
+    sparse_features: []  # Auto-detected from feature_matrix
+    categorical_encoding: "entity_embedding"
+    numerical_normalization: "zscore"
+  
+  # Loss function
+  loss:
+    type: "bce"  # bce, focal, dice
+    focal_gamma: 2.0
+  
+  # Output
+  score_threshold: 0.5
+  top_k: 50  # Candidates after ranking
+
+# Diversity & Bias Mitigation Re-ranking Layer
+reranking:
+  # MMR settings
+  mmr:
+    enabled: true
+    lambda_param: 0.7  # Balance between relevance and diversity (0-1)
+  
+  # Diversity weights
+  weights:
+    diversity: 0.3
+    novelty: 0.2
+    freshness: 0.1
+    coverage: 0.1
+  
+  # Category balancing
+  category_balance:
+    enabled: true
+    max_same_category: 5
+    min_categories: 3
+  
+  # Seller balancing
+  seller_balance:
+    enabled: true
+    max_same_seller: 3
+  
+  # Price diversity
+  price_diversity:
+    enabled: true
+    price_buckets: 5
+  
+  # Freshness
+  freshness:
+    enabled: true
+    decay_days: 30
+  
+  # Final output
+  final_top_k: 20
+  diversity_tolerance: 0.05  # 5% tolerance
+
+# Training Configuration
+training:
+  # Split ratios
+  split:
+    strategy: "temporal"  # random, temporal, by_user
+    train_ratio: 0.8
+    valid_ratio: 0.1
+    test_ratio: 0.1
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 10
+    min_delta: 0.0001
+    metric: "NDCG@10"
+  
+  # GPU settings
+  gpu:
+    enabled: true
+    gpu_id: 0
+    mixed_precision: true
+  
+  # Checkpointing
+  checkpoint:
+    enabled: true
+    save_best: true
+    save_last: true
+    interval_epochs: 5
+  
+  # Logging
+  logging:
+    level: "INFO"
+    log_interval: 10
+    tensorboard: true
+
+# Evaluation Configuration
+evaluation:
+  # Metrics
+  metrics:
+    ranking:
+      - "Recall"
+      - "Precision"
+      - "NDCG"
+      - "MAP"
+      - "HitRate"
+      - "MRR"
+    diversity:
+      - "ILD"
+      - "Coverage"
+      - "Novelty"
+      - "Serendipity"
+    bias:
+      - "PopularityBias"
+      - "ExposureBias"
+      - "LongTailCoverage"
+  
+  # Top-K values
+  top_k_list: [5, 10, 20, 50]
+  
+  # Evaluation settings
+  eval_batch_size: 4096
+  full_sort: false  # Use full sort for small datasets
+  
+  # Significance testing
+  significance:
+    enabled: true
+    confidence_level: 0.95
+
+# Serving Configuration
+serving:
+  # Real-time settings
+  real_time:
+    enabled: true
+    cache_embeddings: true
+    cache_ttl_seconds: 3600
+    max_concurrent_requests: 100
+  
+  # Batch serving
+  batch:
+    enabled: true
+    batch_size: 1024
+    max_workers: 8
+  
+  # Fallback strategies
+  fallback:
+    enabled: true
+    strategies:
+      - "popular_items"
+      - "trending_items"
+      - "random_exploration"
+  
+  # Cold start handling
+  cold_start:
+    enabled: true
+    strategy: "popularity"  # popularity, content_based, hybrid
+    min_interactions: 5
+
+# Explainability Configuration
+explainability:
+  enabled: true
+  
+  # Explanation types
+  explanations:
+    retrieval_source: true
+    sequential_influence: true
+    feature_contributions: true
+    diversity_adjustment: true
+  
+  # Feature importance
+  feature_importance:
+    enabled: true
+    method: "shap"  # shap, permutation, integrated_gradients
+    top_n_features: 10
+  
+  # Output format
+  output_format: "json"
+
+# Performance Optimization
+optimization:
+  # Data loading
+  data_loading:
+    num_workers: 4
+    prefetch_factor: 2
+    pin_memory: true
+  
+  # Inference optimization
+  inference:
+    batch_optimization: true
+    vectorized_operations: true
+    memory_mapping: true
+  
+  # Memory management
+  memory:
+    max_embedding_cache_mb: 4096
+    garbage_collection_interval: 100
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_logging: true
+  console_logging: true
+  rotation:
+    max_bytes: 10485760  # 10MB
+    backup_count: 5

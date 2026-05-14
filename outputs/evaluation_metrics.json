@@ -1,0 +1,35 @@
+{
+  "ranking_metrics": {
+    "Recall@5": 0.22599999999999995,
+    "Precision@5": 0.22599999999999995,
+    "NDCG@5": 0.6199189511127308,
+    "MAP@5": 0.14800865800865798,
+    "Recall@10": 0.504,
+    "Precision@10": 0.252,
+    "NDCG@10": 0.5684592857016465,
+    "MAP@10": 0.20913690476190475,
+    "Recall@20": 1.0,
+    "Precision@20": 0.25,
+    "NDCG@20": 0.5759091040270043,
+    "MAP@20": 0.33238308894407964,
+    "Recall@50": 1.0,
+    "Precision@50": 0.25,
+    "NDCG@50": 0.5759091040270043,
+    "MAP@50": 0.33238308894407964
+  },
+  "diversity_metrics": {
+    "avg_diversity_score": 0.5,
+    "n_unique_items": 1289,
+    "n_users_covered": 100
+  },
+  "bias_metrics": {
+    "popularity_bias": 0.8353333333333334,
+    "long_tail_coverage": 0.3255
+  },
+  "summary": {
+    "n_recommendations": 2000,
+    "n_users": 100,
+    "n_items": 1289,
+    "avg_recommendations_per_user": 20.0
+  }
+}

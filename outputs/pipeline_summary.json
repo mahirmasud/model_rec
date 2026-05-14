@@ -1,0 +1,36 @@
+{
+  "mode": "full",
+  "timestamp": "2026-05-14T20:19:05.566997",
+  "results_summary": {
+    "data_prep": {
+      "n_interactions": 148892,
+      "n_users": 5000,
+      "n_items": 2000
+    },
+    "retrieval": {
+      "n_candidates": 2500000,
+      "n_users": 5000,
+      "top_k": 500,
+      "candidates": "           user_id    item_id  retrieval_score  rank\n0        User_4075  Item_1096         0.420344     1\n1        User_4075   Item_564         0.389707     2\n2        User_4075  Item_1824         0.376334     3\n3        User_4075  Item_1871         0.373620     4\n4        User_4075   Item_872         0.372708     5\n...            ...        ...              ...   ...\n2499995   User_305  Item_1611         0.078857   496\n2499996   User_305  Item_1248         0.078850   497\n2499997   User_305  Item_1086         0.078821   498\n2499998   User_305  Item_1815         0.078798   499\n2499999   User_305  Item_1241         0.078218   500\n\n[2500000 rows x 4 columns]"
+    },
+    "personalization": {
+      "n_personalized": 500000,
+      "n_users": 5000,
+      "top_k": 100,
+      "personalized_candidates": "         user_id    item_id  personalization_score  rank\n0         User_1  Item_1108               0.332168     1\n1         User_1   Item_356               0.292511     2\n2         User_1  Item_1019               0.292282     3\n3         User_1   Item_999               0.289370     4\n4         User_1   Item_831               0.275153     5\n...          ...        ...                    ...   ...\n499995  User_999  Item_1103               0.166237    96\n499996  User_999  Item_1341               0.166223    97\n499997  User_999   Item_488               0.165851    98\n499998  User_999  Item_1483               0.165653    99\n499999  User_999  Item_1618               0.165007   100\n\n[500000 rows x 4 columns]"
+    },
+    "ranking": {
+      "n_ranked": 5000,
+      "n_users": 100,
+      "top_k": 50,
+      "ranked_candidates": "        user_id    item_id  ranking_score\n0     User_4075   Item_480            0.5\n1     User_4075  Item_1511            0.5\n2     User_4075   Item_408            0.5\n3     User_4075  Item_1920            0.5\n4     User_4075   Item_357            0.5\n...         ...        ...            ...\n4995  User_2939   Item_463            0.5\n4996  User_2939  Item_1903            0.5\n4997  User_2939  Item_1435            0.5\n4998  User_2939   Item_338            0.5\n4999  User_2939  Item_1011            0.5\n\n[5000 rows x 3 columns]"
+    },
+    "reranking": {
+      "n_final": 2000,
+      "n_users": 100,
+      "final_top_k": 20,
+      "final_recommendations": "        user_id    item_id  ranking_score  mmr_score  diversity_score  final_rank\n0     User_1004  Item_1910            0.5       0.26              0.5           1\n1     User_1004   Item_113            0.5       0.26              0.5           2\n2     User_1004   Item_911            0.5       0.26              0.5           3\n3     User_1004   Item_985            0.5       0.26              0.5           4\n4     User_1004   Item_927            0.5       0.26              0.5           5\n...         ...        ...            ...        ...              ...         ...\n1995   User_967  Item_1480            0.5       0.26              0.5        1996\n1996   User_967   Item_602            0.5       0.26              0.5        1997\n1997   User_967  Item_1314            0.5       0.26              0.5        1998\n1998   User_967  Item_1412            0.5       0.26              0.5        1999\n1999   User_967  Item_1995            0.5       0.26              0.5        2000\n\n[2000 rows x 6 columns]"
+    },
+    "evaluation": {}
+  }
+}

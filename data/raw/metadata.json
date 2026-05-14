@@ -1,0 +1,36 @@
+{
+  "run_id": "20260511_192422",
+  "pipeline_version": "1.0.0",
+  "raw_shape": [
+    150000,
+    8
+  ],
+  "selected_shape": [
+    150000,
+    6
+  ],
+  "n_features_generated": 8,
+  "n_features_selected": 6,
+  "selection_meta": {
+    "selected_features": [
+      "category",
+      "rating",
+      "timestamp",
+      "price",
+      "platform",
+      "location"
+    ],
+    "n_selected": 6,
+    "dropped_high_correlation": [
+      "__stat_row_mean",
+      "__stat_row_std",
+      "__stat_row_range"
+    ],
+    "mi_scores": {}
+  },
+  "config": {
+    "max_depth": 2,
+    "max_features": 500,
+    "outlier_method": "iqr"
+  }
+}

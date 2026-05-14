@@ -1,0 +1,6 @@
+category
+rating
+timestamp
+price
+platform
+location

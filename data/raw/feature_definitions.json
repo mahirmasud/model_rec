@@ -1,0 +1,30 @@
+[
+  {
+    "name": "category_freq",
+    "primitive": "frequency_encoding",
+    "origin": "manual",
+    "base_features": [
+      "category"
+    ]
+  },
+  {
+    "name": "location_freq",
+    "primitive": "frequency_encoding",
+    "origin": "manual",
+    "base_features": [
+      "location"
+    ]
+  },
+  {
+    "name": "__stat_row_*",
+    "primitive": "row_statistics",
+    "origin": "manual",
+    "base_features": [
+      "user_id",
+      "item_id",
+      "rating",
+      "timestamp",
+      "price"
+    ]
+  }
+]

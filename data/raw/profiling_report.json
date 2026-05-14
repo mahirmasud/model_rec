@@ -1,0 +1,110 @@
+{
+  "shape": [
+    150000,
+    8
+  ],
+  "column_types": {
+    "user_id": "numeric",
+    "item_id": "numeric",
+    "category": "categorical",
+    "rating": "numeric",
+    "timestamp": "numeric",
+    "price": "numeric",
+    "platform": "geospatial",
+    "location": "categorical"
+  },
+  "quality": {
+    "total_rows": 150000,
+    "total_columns": 8,
+    "duplicate_rows": 0,
+    "duplicate_pct": 0.0,
+    "column_stats": {
+      "user_id": {
+        "dtype": "str",
+        "missing_count": 0,
+        "missing_pct": 0.0,
+        "unique_count": 5000,
+        "unique_pct": 3.33
+      },
+      "item_id": {
+        "dtype": "str",
+        "missing_count": 0,
+        "missing_pct": 0.0,
+        "unique_count": 2000,
+        "unique_pct": 1.33
+      },
+      "category": {
+        "dtype": "str",
+        "missing_count": 0,
+        "missing_pct": 0.0,
+        "unique_count": 9,
+        "unique_pct": 0.01
+      },
+      "rating": {
+        "dtype": "float64",
+        "missing_count": 0,
+        "missing_pct": 0.0,
+        "unique_count": 41,
+        "unique_pct": 0.03,
+        "mean": 2.9949,
+        "std": 1.1534,
+        "min": 1.0,
+        "max": 5.0,
+        "skewness": 0.0085,
+        "kurtosis": -1.1902
+      },
+      "timestamp": {
+        "dtype": "str",
+        "missing_count": 0,
+        "missing_pct": 0.0,
+        "unique_count": 731,
+        "unique_pct": 0.49
+      },
+      "price": {
+        "dtype": "float64",
+        "missing_count": 0,
+        "missing_pct": 0.0,
+        "unique_count": 47162,
+        "unique_pct": 31.44,
+        "mean": 252.3129,
+        "std": 142.7541,
+        "min": 5.0,
+        "max": 500.0,
+        "skewness": -0.0003,
+        "kurtosis": -1.196
+      },
+      "platform": {
+        "dtype": "str",
+        "missing_count": 0,
+        "missing_pct": 0.0,
+        "unique_count": 4,
+        "unique_pct": 0.0
+      },
+      "location": {
+        "dtype": "str",
+        "missing_count": 0,
+        "missing_pct": 0.0,
+        "unique_count": 6,
+        "unique_pct": 0.0
+      }
+    }
+  },
+  "correlation_summary": {},
+  "suggested_target": "churn",
+  "datetime_columns": [],
+  "id_columns": [],
+  "text_columns": [],
+  "numeric_columns": [
+    "user_id",
+    "item_id",
+    "rating",
+    "timestamp",
+    "price"
+  ],
+  "categorical_columns": [
+    "category",
+    "location"
+  ],
+  "boolean_columns": [],
+  "constant_columns": []
+}
