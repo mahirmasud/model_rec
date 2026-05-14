@@ -55,11 +55,6 @@ This is a production-ready, multi-stage recommendation system pipeline built wit
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.8+
-- CUDA 11.0+ (optional, for GPU acceleration)
-- pip or conda
 
 ### Install Dependencies
 
