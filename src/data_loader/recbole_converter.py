@@ -8,6 +8,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
+from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype
 
 from ..utils.helpers import save_parquet, save_json, ensure_dir, detect_field
 from ..utils.config_loader import ConfigLoader
@@ -38,14 +39,14 @@ class RecBoleConverter:
         if column.endswith(":token") or column.endswith(":float") or column.endswith(":token_seq"):
             return column
 
-        if np.issubdtype(series.dtype, np.datetime64):
+        if is_datetime64_any_dtype(series):
             return f"{column}:float"
-        if np.issubdtype(series.dtype, np.number):
+        if is_numeric_dtype(series):
             return f"{column}:float"
         return f"{column}:token"
 
     def _coerce_series_for_export(self, series: pd.Series) -> pd.Series:
-        if np.issubdtype(series.dtype, np.datetime64):
+        if is_datetime64_any_dtype(series):
             return (series.astype("int64") // 10**9).astype("float64")
         return series
 

@@ -8,6 +8,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
+from sklearn.metrics.pairwise import cosine_similarity
 
 from ..utils.config_loader import ConfigLoader
 
@@ -112,6 +113,7 @@ class DiversityReranker:
         
         reranked = []
         remaining = candidates.copy()
+        item_vectors = self._build_item_vectors(remaining, item_features)
         
         # Get item popularity for novelty calculation
         item_popularity = {}
@@ -132,8 +134,8 @@ class DiversityReranker:
                 relevance = row.get('ranking_score', row.get('personalization_score', 
                                row.get('retrieval_score', 0.5)))
                 
-                # Compute diversity components
-                diversity = self._compute_diversity_score(item_id, selected_ids, item_features)
+                # Diversity penalty: similarity to already selected items.
+                diversity_penalty = self._max_similarity_penalty(item_id, selected_ids, item_vectors)
                 novelty = self._compute_novelty_score(item_id, [], item_popularity)
                 freshness = self._compute_freshness_score(item_id, item_features)
                 
@@ -141,7 +143,7 @@ class DiversityReranker:
                 mmr_score = (
                     self.lambda_param * relevance -
                     (1 - self.lambda_param) * (
-                        self.diversity_weight * diversity +
+                        self.diversity_weight * diversity_penalty +
                         self.novelty_weight * novelty +
                         self.freshness_weight * freshness
                     )
@@ -154,9 +156,7 @@ class DiversityReranker:
             # Add best item to reranked list
             best_row = remaining.loc[best_idx].copy()
             best_row['mmr_score'] = best_score
-            best_row['diversity_score'] = self._compute_diversity_score(
-                best_row['item_id'], selected_ids, item_features
-            )
+            best_row['diversity_score'] = 1.0 - self._max_similarity_penalty(best_row['item_id'], selected_ids, item_vectors)
             reranked.append(best_row)
             remaining = remaining.drop(best_idx)
         
@@ -166,6 +166,34 @@ class DiversityReranker:
         result_df = pd.DataFrame(reranked)
         result_df['final_rank'] = range(1, len(result_df) + 1)
         return result_df
+
+    def _build_item_vectors(self, candidates: pd.DataFrame, item_features: Optional[pd.DataFrame]) -> Dict[str, np.ndarray]:
+        """Build per-item vectors for diversity similarity calculations."""
+        ids = candidates['item_id'].astype(str).tolist()
+        if item_features is not None and not item_features.empty and 'item_id' in item_features.columns:
+            feats = item_features[item_features['item_id'].astype(str).isin(ids)].copy()
+            if not feats.empty:
+                value_cols = [c for c in feats.columns if c != 'item_id']
+                # encode mixed typed columns
+                enc = pd.get_dummies(feats[value_cols].astype(str), dummy_na=True)
+                vec_map = {iid: vec for iid, vec in zip(feats['item_id'].astype(str), enc.values.astype(float))}
+                return {iid: vec_map.get(iid, self._fallback_vector(iid)) for iid in ids}
+        return {iid: self._fallback_vector(iid) for iid in ids}
+
+    def _fallback_vector(self, item_id: str) -> np.ndarray:
+        rng = np.random.default_rng(abs(hash(item_id)) % (2**32))
+        v = rng.normal(0, 1, 16)
+        return v / (np.linalg.norm(v) + 1e-8)
+
+    def _max_similarity_penalty(self, item_id: str, selected_ids: List[str], item_vectors: Dict[str, np.ndarray]) -> float:
+        if not selected_ids:
+            return 0.0
+        current = item_vectors[item_id].reshape(1, -1)
+        selected = np.vstack([item_vectors[s] for s in selected_ids if s in item_vectors])
+        if selected.size == 0:
+            return 0.0
+        sims = cosine_similarity(current, selected).flatten()
+        return float(np.clip(np.max(sims), 0.0, 1.0))
     
     def apply_constraints(self, recommendations: pd.DataFrame,
                           item_features: Optional[pd.DataFrame] = None) -> pd.DataFrame:
@@ -236,6 +264,9 @@ class DiversityReranker:
             return {'n_final': 0, 'final_recommendations': pd.DataFrame()}
         
         final_df = pd.concat(all_recommendations, ignore_index=True)
+        final_df['ranking_score'] = final_df.groupby('user_id')['ranking_score'].transform(
+            lambda s: s / (s.sum() + 1e-12)
+        )
         
         # Apply constraints
         final_df = self.apply_constraints(final_df)

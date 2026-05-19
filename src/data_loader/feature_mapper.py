@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 import logging
 import json
+from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype, is_string_dtype
 
 from ..utils.helpers import load_parquet, load_json, save_json, detect_field
 from ..utils.config_loader import ConfigLoader
@@ -57,13 +58,13 @@ class FeatureMapper:
             if col.lower().endswith('_id') or n_unique == n_total:
                 feature_types['id'].append(col)
             # Temporal
-            elif np.issubdtype(dtype, np.datetime64) or 'time' in col.lower() or 'date' in col.lower():
+            elif is_datetime64_any_dtype(df[col]) or 'time' in col.lower() or 'date' in col.lower():
                 feature_types['temporal'].append(col)
             # Categorical (low cardinality)
-            elif dtype == 'object' or (np.issubdtype(dtype, np.integer) and n_unique < 50):
+            elif is_string_dtype(df[col]) or (is_numeric_dtype(df[col]) and n_unique < 50):
                 feature_types['categorical'].append(col)
             # Numerical
-            elif np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.integer):
+            elif is_numeric_dtype(df[col]):
                 feature_types['numerical'].append(col)
             else:
                 feature_types['categorical'].append(col)
@@ -205,6 +206,8 @@ class FeatureMapper:
         # Handle temporal features
         for col in feature_types['temporal']:
             if col in base_df.columns:
+                if not is_datetime64_any_dtype(base_df[col]):
+                    base_df[col] = pd.to_datetime(base_df[col], errors='coerce')
                 # Extract cyclical features
                 base_df[f'{col}_hour'] = base_df[col].dt.hour
                 base_df[f'{col}_dayofweek'] = base_df[col].dt.dayofweek
