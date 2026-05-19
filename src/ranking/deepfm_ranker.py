@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics.pairwise import cosine_similarity
+from scipy.special import softmax
+from scipy.sparse.linalg import svds
 
 from ..utils.config_loader import ConfigLoader
 
@@ -38,6 +41,10 @@ class DeepFMRanker:
         # Model weights (simplified implementation)
         self.fm_weights = {}
         self.deep_weights = []
+        self.user_embedding_matrix = None
+        self.item_embedding_matrix = None
+        self.user_ids = []
+        self.item_ids = []
     
     def _encode_features(self, df: pd.DataFrame, sparse_features: List[str], 
                          dense_features: List[str]) -> pd.DataFrame:
@@ -132,7 +139,47 @@ class DeepFMRanker:
         }
         
         self.logger.info(f"Trained on {len(df)} samples with {len(sparse_features)} sparse and {len(dense_features)} dense features")
+
+        # Build user/item embeddings from observed interactions and available features.
+        self._build_embeddings(encoded_df)
+        self._validate_embeddings()
         return self
+
+    def _build_embeddings(self, encoded_df: pd.DataFrame) -> None:
+        """Create deterministic, non-constant user/item embeddings from encoded features."""
+        if encoded_df.empty:
+            raise ValueError("Cannot build embeddings from empty dataframe.")
+
+        numeric_cols = [c for c in encoded_df.columns if c.endswith('_enc') or c.endswith('_scaled')]
+        user_item = pd.crosstab(encoded_df['user_id'], encoded_df['item_id']).astype(float)
+        self.user_ids = user_item.index.tolist()
+        self.item_ids = user_item.columns.tolist()
+        matrix = user_item.values.astype(float)
+        k = max(8, min(self.embedding_dim, min(matrix.shape) - 1))
+        u, s, vt = svds(matrix, k=k)
+        order = np.argsort(s)[::-1]
+        u, s, vt = u[:, order], s[order], vt[order, :]
+        user_mat = u @ np.diag(np.sqrt(s))
+        item_mat = vt.T @ np.diag(np.sqrt(s))
+        self.user_embedding_matrix = self._l2_normalize(user_mat)
+        self.item_embedding_matrix = self._l2_normalize(item_mat)
+
+    @staticmethod
+    def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        return matrix / norms
+
+    def _validate_embeddings(self) -> None:
+        """Detect invalid embedding states that cause ranking collapse."""
+        if self.user_embedding_matrix is None or self.item_embedding_matrix is None:
+            raise ValueError("Embeddings were not created.")
+        if np.any(np.linalg.norm(self.user_embedding_matrix, axis=1) == 0):
+            raise ValueError("Zero-vector user embeddings detected.")
+        if np.any(np.linalg.norm(self.item_embedding_matrix, axis=1) == 0):
+            raise ValueError("Zero-vector item embeddings detected.")
+        if len(np.unique(np.round(self.item_embedding_matrix, 8), axis=0)) == 1:
+            raise ValueError("Identical item embeddings detected.")
     
     def predict(self, df: pd.DataFrame) -> np.ndarray:
         """Predict ranking scores for items."""
@@ -160,14 +207,43 @@ class DeepFMRanker:
         if len(candidates) == 0:
             return candidates
         
-        # Predict scores
-        scores = self.predict(candidates)
         candidates = candidates.copy()
-        candidates['ranking_score'] = scores
-        
-        # Sort by score
-        ranked = candidates.sort_values('ranking_score', ascending=False)
+        user_index = {u: i for i, u in enumerate(self.user_ids)}
+        item_index = {i: j for j, i in enumerate(self.item_ids)}
+
+        ranked_parts = []
+        for user_id, group in candidates.groupby('user_id'):
+            if user_id not in user_index:
+                continue
+            valid = group[group['item_id'].isin(item_index)].copy()
+            if valid.empty:
+                continue
+            u_vec = self.user_embedding_matrix[user_index[user_id]].reshape(1, -1)
+            i_mat = np.vstack([self.item_embedding_matrix[item_index[i]] for i in valid['item_id']])
+            sim_scores = cosine_similarity(u_vec, i_mat).flatten()
+            probs = softmax(sim_scores)
+
+            valid['similarity_score'] = sim_scores
+            valid['ranking_score'] = probs
+            valid = valid.sort_values('ranking_score', ascending=False)
+            ranked_parts.append(valid)
+
+        ranked = pd.concat(ranked_parts, ignore_index=True) if ranked_parts else pd.DataFrame(columns=list(candidates.columns) + ['similarity_score', 'ranking_score'])
+        self._validate_ranked_scores(ranked)
         return ranked
+
+    def _validate_ranked_scores(self, ranked: pd.DataFrame) -> None:
+        """Validation checks for ranking-score integrity."""
+        if ranked.empty:
+            raise ValueError("No ranked candidates produced.")
+        grouped = ranked.groupby('user_id')['ranking_score']
+        sum_check = grouped.sum()
+        if not np.allclose(sum_check.values, 1.0, atol=1e-6):
+            raise ValueError("Invalid probability distribution: per-user scores do not sum to 1.")
+        var_check = grouped.var().fillna(0.0)
+        if (var_check <= 0).any():
+            bad_users = var_check[var_check <= 0].index.tolist()[:5]
+            raise ValueError(f"Constant score collapse detected for users: {bad_users}")
     
     def run(self, deepfm_data: Dict[str, Any]) -> Dict[str, Any]:
         """Run the complete ranking pipeline."""
@@ -177,18 +253,18 @@ class DeepFMRanker:
         # Get candidates from previous stage or use all user-item pairs
         df = deepfm_data['dataframe']
         
-        # Sample candidates for ranking (in production, this would come from retrieval)
-        # For demo, we'll create user-item pairs
+        # Build candidate pool.
         users = df['user_id'].unique()[:100]  # Limit for efficiency
         items = df['item_id'].unique()
         
         # Create candidate pairs
         candidates = []
         for user in users:
-            user_items = df[df['user_id'] == user]['item_id'].tolist()
-            # Mix seen and unseen items
-            sample_items = list(np.random.choice(items, min(50, len(items)), replace=False))
+            seen_items = set(df[df['user_id'] == user]['item_id'].tolist())
+            sample_items = list(np.random.choice(items, min(100, len(items)), replace=False))
             for item in sample_items:
+                if item in seen_items:
+                    continue
                 candidates.append({'user_id': user, 'item_id': item})
         
         candidates_df = pd.DataFrame(candidates)
