@@ -35,6 +35,9 @@ class AutonomousRecBolePipeline:
         ds_cfg = self.converter.convert_interactions(interactions, inter_dir)
         gen = RecBoleConfigGenerator(dataset_name=ds_cfg["dataset_name"])
         base = Path(inter_dir)
+        inter_file = base / f'{ds_cfg["dataset_name"]}.inter'
+        if not inter_file.exists():
+            raise FileNotFoundError(f"Expected RecBole interaction file not found: {inter_file}")
 
         outputs = {"mapping": mapping, "dataset": ds_cfg, "stages": {}}
         for stage in ["retrieval", "sequential", "ranking"]:
