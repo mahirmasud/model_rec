@@ -337,3 +337,31 @@ MIT License
 
 If you use this system in your research, please cite:
 
+
+
+## Autonomous RecBole-Native Mode (NEW)
+
+This repository now includes an autonomous RecBole-powered pipeline mode:
+
+```bash
+python main.py --config config/pipeline_config.yaml --mode recbole
+```
+
+What it does:
+- Automatically infers dataset schema (user/item/time/label/session/context fields) from raw tabular data.
+- Dynamically generates RecBole dataset artifacts and YAML configs.
+- Trains/evaluates RecBole-native LightGCN (retrieval), SASRec (sequential), and DeepFM (ranking/CTR).
+- Falls back gracefully with popularity-based top-k outputs if RecBole runtime constraints occur.
+
+Install note: RecBole runtime may require `ray`; this repo includes it in `requirements.txt`.
+
+New modules:
+- `src/schema_inference/` autonomous schema inference engine
+- `src/dynamic_config/` dynamic RecBole config generation
+- `src/model_registry/` stage-to-model registry
+- `src/recbole_adapter/` native RecBole runner adapter
+- `src/training_pipeline/` autonomous end-to-end RecBole pipeline
+
+### Dataset Autonomy
+No manual user_id/item_id/timestamp mapping is required in recbole mode.
+The inference engine uses keyword semantics, cardinality, null-ratio, type inference, and pattern heuristics to map fields automatically.

@@ -9,7 +9,8 @@ torch>=1.9.0
 torchvision>=0.10.0
 
 # RecBole v1.2.0
-#recbole==1.2.0
+recbole>=1.2.0
+ray[tune]>=2.6.0
 
 # Data Processing
 pyarrow>=6.0.0
