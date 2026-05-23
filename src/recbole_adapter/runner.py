@@ -1,6 +1,6 @@
-from pathlib import Path
 from typing import Any, Dict
 
+import numpy as np
 import pandas as pd
 
 
@@ -10,8 +10,25 @@ class RecBoleRunner:
     def __init__(self, logger=None):
         self.logger = logger
 
+    def _apply_numpy_compat(self) -> None:
+        """Patch NumPy 2.x alias removals that older RecBole paths may still use."""
+        patched = []
+        if not hasattr(np, "float_"):
+            np.float_ = np.float64
+            patched.append("np.float_ -> np.float64")
+        if not hasattr(np, "int_"):
+            np.int_ = np.int64
+            patched.append("np.int_ -> np.int64")
+
+        if patched and self.logger:
+            self.logger.info(
+                "Applied NumPy compatibility aliases for RecBole: %s",
+                ", ".join(patched),
+            )
+
     def train_and_eval(self, config_file: str) -> Dict[str, Any]:
         try:
+            self._apply_numpy_compat()
             from recbole.quick_start import run_recbole
             result = run_recbole(config_file_list=[config_file])
             return {"status": "trained", "result": result}
