@@ -58,3 +58,6 @@ pytest-cov>=3.0.0
 # Type Checking
 mypy>=0.950
 typing-extensions>=4.0.0
+# RecBole runtime dependency (required by some training flows)
+ray>=2.0.0
+

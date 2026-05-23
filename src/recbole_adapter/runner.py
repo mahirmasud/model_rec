@@ -15,6 +15,16 @@ class RecBoleRunner:
             from recbole.quick_start import run_recbole
             result = run_recbole(config_file_list=[config_file])
             return {"status": "trained", "result": result}
+        except ModuleNotFoundError as e:
+            if self.logger:
+                if getattr(e, "name", "") == "ray":
+                    self.logger.warning(
+                        "RecBole training fallback triggered: missing optional dependency 'ray'. "
+                        "Install it with `pip install ray` (or install -r requirements.txt)."
+                    )
+                else:
+                    self.logger.warning(f"RecBole training fallback triggered: missing module '{e.name}'")
+            return {"status": "fallback", "error": str(e)}
         except Exception as e:  # graceful in environments without GPU/RecBole runtime
             if self.logger:
                 self.logger.warning(f"RecBole training fallback triggered: {e}")
