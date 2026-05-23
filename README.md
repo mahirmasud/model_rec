@@ -353,8 +353,6 @@ What it does:
 - Trains/evaluates RecBole-native LightGCN (retrieval), SASRec (sequential), and DeepFM (ranking/CTR).
 - Falls back gracefully with popularity-based top-k outputs if RecBole runtime constraints occur.
 
-Install note: RecBole runtime may require `ray`; this repo includes it in `requirements.txt`.
-
 New modules:
 - `src/schema_inference/` autonomous schema inference engine
 - `src/dynamic_config/` dynamic RecBole config generation

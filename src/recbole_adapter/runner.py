@@ -24,7 +24,6 @@ class RecBoleRunner:
             if self.logger:
                 self.logger.warning(f"RecBole training fallback triggered: {msg}")
             return {"status": "fallback", "error": msg, "missing_dependencies": missing}
-
         try:
             from recbole.quick_start import run_recbole
             result = run_recbole(config_file_list=[config_file])
