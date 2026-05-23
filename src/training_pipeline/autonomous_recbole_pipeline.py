@@ -32,18 +32,19 @@ class AutonomousRecBolePipeline:
         mapping = self.inferer.infer(raw_df)
         interactions = self._standardize(raw_df, mapping)
 
-        ds_cfg = self.converter.convert_interactions(interactions, inter_dir)
+        base_dir = Path(inter_dir)
+        dataset_dir = base_dir / self.converter.dataset_name
+        ds_cfg = self.converter.convert_interactions(interactions, str(dataset_dir))
         gen = RecBoleConfigGenerator(dataset_name=ds_cfg["dataset_name"])
-        base = Path(inter_dir)
-        inter_file = base / f'{ds_cfg["dataset_name"]}.inter'
+        inter_file = dataset_dir / f'{ds_cfg["dataset_name"]}.inter'
         if not inter_file.exists():
             raise FileNotFoundError(f"Expected RecBole interaction file not found: {inter_file}")
 
         outputs = {"mapping": mapping, "dataset": ds_cfg, "stages": {}}
         for stage in ["retrieval", "sequential", "ranking"]:
             spec = self.registry.get(stage)
-            cfg = gen.build(str(base), {"user_id": "user_id", "item_id": "item_id", "timestamp": "timestamp", "label": "rating"}, spec.recbole_model)
-            cfg_path = gen.save(cfg, str(base / f"{spec.recbole_model.lower()}_autogen.yaml"))
+            cfg = gen.build(str(base_dir), {"user_id": "user_id", "item_id": "item_id", "timestamp": "timestamp", "label": "rating"}, spec.recbole_model)
+            cfg_path = gen.save(cfg, str(dataset_dir / f"{spec.recbole_model.lower()}_autogen.yaml"))
             outputs["stages"][stage] = self.runner.train_and_eval(cfg_path)
 
         outputs["fallback_predictions"] = self.runner.predict_topk_placeholder(interactions, "user_id", "item_id", k=20)
