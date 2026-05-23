@@ -9,10 +9,17 @@ class RecBoleConfigGenerator:
         self.dataset_name = dataset_name
 
     def build(self, data_path: str, mapping: Dict[str, Any], model: str, overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        normalized_data_path = Path(data_path)
+        # RecBole expects `data_path` as a directory containing `<dataset>.inter`.
+        # If callers pass a dataset-stem path (e.g., data/inter/recsys_dataset),
+        # normalize it back to the parent directory.
+        if normalized_data_path.name == self.dataset_name:
+            normalized_data_path = normalized_data_path.parent
+
         cfg = {
             "model": model,
             "dataset": self.dataset_name,
-            "data_path": data_path,
+            "data_path": str(normalized_data_path.resolve()),
             "USER_ID_FIELD": mapping["user_id"],
             "ITEM_ID_FIELD": mapping["item_id"],
             "TIME_FIELD": mapping.get("timestamp"),
