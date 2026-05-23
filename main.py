@@ -43,7 +43,7 @@ def parse_args():
     parser.add_argument(
         '--mode', '-m',
         type=str,
-        choices=['full', 'retrieve', 'personalize', 'rank', 'rerank', 'evaluate', 'serve', 'prepare'],
+        choices=['full', 'retrieve', 'personalize', 'rank', 'rerank', 'evaluate', 'serve', 'prepare', 'recbole'],
         default='full',
         help='Pipeline execution mode'
     )
@@ -136,6 +136,19 @@ def run_pipeline(config: ConfigLoader, mode: str, args):
             logger.info("Data preparation complete. Run with --mode full for complete pipeline.")
             return results
         
+
+        # Autonomous RecBole-native pipeline
+        if mode in ['recbole']:
+            with StageLogger(logger, "Autonomous RecBole Pipeline"):
+                from src.training_pipeline import AutonomousRecBolePipeline
+                builder = DatasetBuilder(config, logger)
+                builder.load_data()
+                if builder.interactions_df is None:
+                    raise ValueError('No cleaned dataset found for autonomous RecBole mode.')
+                auto = AutonomousRecBolePipeline(config, logger)
+                results['recbole'] = auto.run(builder.interactions_df, config.get('data.inter_dir', 'data/inter'))
+                return results
+
         # Stage 1: LightGCN Retrieval
         if mode in ['full', 'retrieve']:
             with StageLogger(logger, "LightGCN Retrieval"):
