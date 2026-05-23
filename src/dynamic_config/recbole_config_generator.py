@@ -23,12 +23,15 @@ class RecBoleConfigGenerator:
                 "user": "*",
                 "item": "*",
             },
-            "neg_sampling": {"uniform": 1},
+            "train_neg_sample_args": {"distribution": "uniform", "sample_num": 1, "alpha": 1.0, "dynamic": False, "candidate_num": 0},
             "eval_args": {"split": {"RS": [0.8, 0.1, 0.1]}, "order": "TO", "group_by": "user", "mode": "full"},
             "topk": [10, 20, 50],
             "metrics": ["Recall", "Precision", "NDCG", "MAP", "Hit", "MRR"],
             "valid_metric": "NDCG@10",
         }
+        # Point-wise CE losses (e.g., DeepFM) should not use training negative sampling.
+        if model.lower() in {"deepfm"}:
+            cfg["train_neg_sample_args"] = {"distribution": "none", "sample_num": "none", "alpha": "none", "dynamic": False, "candidate_num": 0}
         if overrides:
             cfg.update(overrides)
         return cfg
