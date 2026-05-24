@@ -147,6 +147,15 @@ def run_pipeline(config: ConfigLoader, mode: str, args):
                     raise ValueError('No cleaned dataset found for autonomous RecBole mode.')
                 auto = AutonomousRecBolePipeline(config, logger)
                 results['recbole'] = auto.run(builder.interactions_df, config.get('data.inter_dir', 'data/inter'))
+
+                # Persist recommendations for all users (top-k popular fallback output)
+                # generated from auto-detected columns in cleaned_dataset interactions.
+                fallback_df = results['recbole'].get('fallback_predictions')
+                if fallback_df is not None and not fallback_df.empty:
+                    from src.utils.helpers import save_parquet
+                    rec_path = Path(output_dir) / 'top_k_recommendations.parquet'
+                    save_parquet(fallback_df, rec_path)
+                    logger.info(f"Saved RecBole recommendations to {rec_path}")
                 return results
 
         # Stage 1: LightGCN Retrieval

@@ -11,6 +11,10 @@ class RecBoleConfigGenerator:
     def build(self, data_path: str, mapping: Dict[str, Any], model: str, overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
         normalized_data_path = Path(data_path)
         # RecBole expects `data_path` as a directory containing `<dataset>.inter`.
+        # If callers pass a concrete interaction file (e.g., .../recsys_dataset.inter),
+        # normalize it to the parent directory.
+        if normalized_data_path.suffix == ".inter":
+            normalized_data_path = normalized_data_path.parent
         # If callers pass a dataset-stem path (e.g., data/inter/recsys_dataset),
         # normalize it back to the parent directory.
         if normalized_data_path.name == self.dataset_name:
@@ -35,10 +39,11 @@ class RecBoleConfigGenerator:
             "topk": [10, 20, 50],
             "metrics": ["Recall", "Precision", "NDCG", "MAP", "Hit", "MRR"],
             "valid_metric": "NDCG@10",
+            "epochs": 50,
         }
         # Point-wise CE losses (e.g., DeepFM) should not use training negative sampling.
         if model.lower() in {"deepfm"}:
-            cfg["train_neg_sample_args"] = {"distribution": "none", "sample_num": "none", "alpha": "none", "dynamic": False, "candidate_num": 0}
+            cfg["train_neg_sample_args"] = None
         if overrides:
             cfg.update(overrides)
         return cfg
