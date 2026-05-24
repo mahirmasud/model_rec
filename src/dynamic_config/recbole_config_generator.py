@@ -39,6 +39,7 @@ class RecBoleConfigGenerator:
             "topk": [10, 20, 50],
             "metrics": ["Recall", "Precision", "NDCG", "MAP", "Hit", "MRR"],
             "valid_metric": "NDCG@10",
+            "epochs": 50,
         }
         # Point-wise CE losses (e.g., DeepFM) should not use training negative sampling.
         if model.lower() in {"deepfm"}:
