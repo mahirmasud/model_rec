@@ -147,6 +147,20 @@ def run_pipeline(config: ConfigLoader, mode: str, args):
                     raise ValueError('No cleaned dataset found for autonomous RecBole mode.')
                 auto = AutonomousRecBolePipeline(config, logger)
                 results['recbole'] = auto.run(builder.interactions_df, config.get('data.inter_dir', 'data/inter'))
+
+                # Persist recommendations for all users (top-k popular fallback output)
+                # generated from auto-detected columns in cleaned_dataset interactions.
+                fallback_df = results['recbole'].get('fallback_predictions')
+                if fallback_df is not None and not fallback_df.empty:
+                    from src.reranking.diversity_reranker import DiversityReranker
+                    from src.utils.helpers import save_parquet
+                    reranker = DiversityReranker(config, logger)
+                    rerank_input = {'ranked_candidates': fallback_df.rename(columns={'score': 'ranking_score'})}
+                    rerank_output = reranker.run(rerank_input)
+                    final_df = rerank_output.get('final_recommendations', fallback_df)
+                    rec_path = Path(output_dir) / 'top_k_recommendations.parquet'
+                    save_parquet(final_df, rec_path)
+                    logger.info(f"Saved RecBole recommendations to {rec_path}")
                 return results
 
         # Stage 1: LightGCN Retrieval
