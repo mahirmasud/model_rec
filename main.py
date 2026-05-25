@@ -152,9 +152,14 @@ def run_pipeline(config: ConfigLoader, mode: str, args):
                 # generated from auto-detected columns in cleaned_dataset interactions.
                 fallback_df = results['recbole'].get('fallback_predictions')
                 if fallback_df is not None and not fallback_df.empty:
+                    from src.reranking.diversity_reranker import DiversityReranker
                     from src.utils.helpers import save_parquet
+                    reranker = DiversityReranker(config, logger)
+                    rerank_input = {'ranked_candidates': fallback_df.rename(columns={'score': 'ranking_score'})}
+                    rerank_output = reranker.run(rerank_input)
+                    final_df = rerank_output.get('final_recommendations', fallback_df)
                     rec_path = Path(output_dir) / 'top_k_recommendations.parquet'
-                    save_parquet(fallback_df, rec_path)
+                    save_parquet(final_df, rec_path)
                     logger.info(f"Saved RecBole recommendations to {rec_path}")
                 return results
 
