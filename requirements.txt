@@ -32,7 +32,7 @@ jsonschema>=4.0.0
 
 # Logging & Monitoring
 tqdm>=4.62.0
-colorlog>=6.6.0
+colorlog==4.7.2
 
 # Visualization (Optional)
 matplotlib>=3.4.0
