@@ -1,0 +1,4 @@
+weights:
+  purchase: 1.0
+  add_to_cart: 0.5
+  view: 0.1

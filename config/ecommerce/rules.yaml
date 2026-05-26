@@ -1,0 +1,6 @@
+rules:
+  - name: prefer_purchase_as_label
+    when:
+      has_column_like: [purchase, conversion]
+    then:
+      set_label: purchase
