@@ -1,0 +1,3 @@
+questions:
+  - id: ambiguous_label
+    prompt: Which source column should be used as the main interaction label?

@@ -1,0 +1,5 @@
+keywords:
+  rev: revenue
+  amt: amount
+  qty: quantity
+  sku: item_id

@@ -1,0 +1,4 @@
+checks:
+  - name: user_item_required
+    type: required_columns
+    columns: [user_id, item_id]
