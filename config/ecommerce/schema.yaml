@@ -1,0 +1,13 @@
+fields:
+  user_id:
+    role: identity
+    synonyms: [user_id, uid, customer_id, member_id]
+  item_id:
+    role: identity
+    synonyms: [item_id, product_id, sku, asin]
+  timestamp:
+    role: interaction_signal
+    synonyms: [timestamp, event_time, created_at]
+  label:
+    role: interaction_signal
+    synonyms: [rating, click, purchase, interaction]
