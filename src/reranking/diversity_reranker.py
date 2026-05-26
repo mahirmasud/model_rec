@@ -140,13 +140,12 @@ class DiversityReranker:
                 freshness = self._compute_freshness_score(item_id, item_features)
                 
                 # MMR score
+                # Correct MMR score
                 mmr_score = (
-                    self.lambda_param * relevance -
-                    (1 - self.lambda_param) * (
-                        self.diversity_weight * diversity_penalty +
-                        self.novelty_weight * novelty +
-                        self.freshness_weight * freshness
-                    )
+                    self.lambda_param * relevance
+                    - (1 - self.lambda_param) * self.diversity_weight * diversity_penalty
+                    + self.novelty_weight * novelty
+                    + self.freshness_weight * freshness
                 )
                 
                 if mmr_score > best_score:
@@ -185,15 +184,37 @@ class DiversityReranker:
         v = rng.normal(0, 1, 16)
         return v / (np.linalg.norm(v) + 1e-8)
 
-    def _max_similarity_penalty(self, item_id: str, selected_ids: List[str], item_vectors: Dict[str, np.ndarray]) -> float:
+    def _max_similarity_penalty(
+        self,
+        item_id: str,
+        selected_ids: List[str],
+        item_vectors: Dict[str, np.ndarray]
+    ) -> float:
+
         if not selected_ids:
-            return 0.0
+            return 0.5
+
         current = item_vectors[item_id].reshape(1, -1)
-        selected = np.vstack([item_vectors[s] for s in selected_ids if s in item_vectors])
+
+        selected = np.vstack([
+            item_vectors[s]
+            for s in selected_ids
+            if s in item_vectors
+        ])
+
         if selected.size == 0:
             return 0.0
+
+        # Raw cosine similarity in [-1, 1]
         sims = cosine_similarity(current, selected).flatten()
-        return float(np.clip(np.max(sims), 0.0, 1.0))
+
+        # Normalize cosine similarity to [0, 1]
+        normalized_sims = (sims + 1.0) / 2.0
+
+        # Use mean similarity instead of max (recommended)
+        penalty = np.mean(normalized_sims)
+
+        return float(np.clip(penalty, 0.0, 1.0))
     
     def apply_constraints(self, recommendations: pd.DataFrame,
                           item_features: Optional[pd.DataFrame] = None) -> pd.DataFrame:
