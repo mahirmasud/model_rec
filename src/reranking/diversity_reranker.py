@@ -26,10 +26,10 @@ class DiversityReranker:
         self.logger = logger or logging.getLogger(__name__)
         
         # MMR parameters
-        self.lambda_param = config.get('reranking.mmr.lambda_param', 0.7)
+        self.lambda_param = config.get('reranking.mmr.lambda_param', 0.6)
         
         # Diversity weights
-        self.diversity_weight = config.get('reranking.weights.diversity', 0.3)
+        self.diversity_weight = config.get('reranking.weights.diversity', 0.5)
         self.novelty_weight = config.get('reranking.weights.novelty', 0.2)
         self.freshness_weight = config.get('reranking.weights.freshness', 0.1)
         
