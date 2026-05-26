@@ -122,40 +122,81 @@ class DiversityReranker:
             item_popularity = item_counts
         
         while len(remaining) > 0 and len(reranked) < self.final_top_k:
-            best_score = -np.inf
-            best_idx = 0
-            
+
             selected_ids = [r['item_id'] for r in reranked]
-            
-            for idx, row in remaining.iterrows():
-                item_id = row['item_id']
-                
-                # Get base relevance score
-                relevance = row.get('ranking_score', row.get('personalization_score', 
-                               row.get('retrieval_score', 0.5)))
-                
-                # Diversity penalty: similarity to already selected items.
-                diversity_penalty = self._max_similarity_penalty(item_id, selected_ids, item_vectors)
-                novelty = self._compute_novelty_score(item_id, [], item_popularity)
-                freshness = self._compute_freshness_score(item_id, item_features)
-                
-                # MMR score
-                # Correct MMR score
-                mmr_score = (
-                    self.lambda_param * relevance
-                    - (1 - self.lambda_param) * self.diversity_weight * diversity_penalty
-                    + self.novelty_weight * novelty
-                    + self.freshness_weight * freshness
-                )
-                
-                if mmr_score > best_score:
-                    best_score = mmr_score
-                    best_idx = idx
-            
-            # Add best item to reranked list
+
+            best_score = -np.inf
+            best_idx = None
+
+            # -------------------------------
+            # STEP 1: batch build matrices
+            # -------------------------------
+
+            remaining_ids = remaining['item_id'].astype(str).tolist()
+
+            candidate_embeddings = np.vstack([
+                item_vectors[i] for i in remaining_ids
+            ])
+
+            if len(selected_ids) > 0:
+                selected_embeddings = np.vstack([
+                    item_vectors[i] for i in selected_ids if i in item_vectors
+                ])
+            else:
+                selected_embeddings = None
+
+            # -------------------------------
+            # STEP 2: VECTORISED PENALTY
+            # -------------------------------
+
+            if selected_embeddings is None or selected_embeddings.size == 0:
+                penalties = np.zeros(len(remaining_ids))
+            else:
+                sim_matrix = candidate_embeddings @ selected_embeddings.T
+
+                max_sims = np.max(sim_matrix, axis=1)
+                mean_sims = np.mean(sim_matrix, axis=1)
+
+                normalized_max = (max_sims + 1.0) / 2.0
+                normalized_mean = (mean_sims + 1.0) / 2.0
+
+                penalties = (0.7 * normalized_max) + (0.3 * normalized_mean)
+
+            # -------------------------------
+            # STEP 3: vectorised scores
+            # -------------------------------
+
+            relevance_scores = remaining['ranking_score'].values
+
+            novelty_scores = np.array([
+                self._compute_novelty_score(i, [], item_popularity)
+                for i in remaining_ids
+            ])
+
+            freshness_scores = np.array([
+                self._compute_freshness_score(i, item_features)
+                for i in remaining_ids
+            ])
+
+            mmr_scores = (
+                self.lambda_param * relevance_scores
+                - (1 - self.lambda_param) * self.diversity_weight * penalties
+                + self.novelty_weight * novelty_scores
+                + self.freshness_weight * freshness_scores
+            )
+
+            # -------------------------------
+            # STEP 4: select best item
+            # -------------------------------
+
+            best_idx_pos = np.argmax(mmr_scores)
+            best_score = mmr_scores[best_idx_pos]
+            best_idx = remaining.index[best_idx_pos]
+
             best_row = remaining.loc[best_idx].copy()
             best_row['mmr_score'] = best_score
-            best_row['diversity_score'] = 1.0 - self._max_similarity_penalty(best_row['item_id'], selected_ids, item_vectors)
+            best_row['diversity_score'] = 1.0 - penalties[best_idx_pos]
+
             reranked.append(best_row)
             remaining = remaining.drop(best_idx)
         
