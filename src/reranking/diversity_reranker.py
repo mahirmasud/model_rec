@@ -30,8 +30,8 @@ class DiversityReranker:
         
         # Diversity weights
         self.diversity_weight = config.get('reranking.weights.diversity', 0.5)
-        self.novelty_weight = config.get('reranking.weights.novelty', 0.2)
-        self.freshness_weight = config.get('reranking.weights.freshness', 0.1)
+        self.novelty_weight = config.get('reranking.weights.novelty', 0.05)
+        self.freshness_weight = config.get('reranking.weights.freshness', 0.05)
         
         # Balancing constraints
         self.max_same_category = config.get('reranking.category_balance.max_same_category', 5)
