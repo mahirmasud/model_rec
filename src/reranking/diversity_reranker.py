@@ -105,13 +105,25 @@ class DiversityReranker:
         df["trending_score"] = df["inverse_popularity"] * df["recency_decay"]
 
         self.item_embeddings = self._build_item_embeddings(df)
-        vectors = np.vstack([self.item_embeddings.get(str(i), np.zeros(4)) for i in df["item_id"].astype(str)])
-        vectors = self._safe_norm(vectors)
-
-        cosine = vectors @ vectors.T
-        np.fill_diagonal(cosine, 0.0)
-        df["mean_similarity"] = cosine.mean(axis=1)
-        df["max_similarity"] = cosine.max(axis=1)
+        embedding_dim = len(next(iter(self.item_embeddings.values()))) if self.item_embeddings else 4
+        fallback_vector = np.zeros(embedding_dim, dtype=float)
+        df["mean_similarity"] = 0.0
+        df["max_similarity"] = 0.0
+        # SAFETY: Never compute global item-item similarity at catalog scale.
+        # Similarity must stay within each user group to avoid O(N^2) memory usage.
+        for _, g in df.groupby("user_id", sort=False):
+            idx = g.index
+            if len(idx) <= 1:
+                continue
+            vectors = np.vstack([
+                self.item_embeddings.get(str(item_id), fallback_vector)
+                for item_id in g["item_id"].astype(str)
+            ])
+            vectors = self._safe_norm(vectors)
+            cosine = vectors @ vectors.T
+            np.fill_diagonal(cosine, 0.0)
+            df.loc[idx, "mean_similarity"] = cosine.mean(axis=1)
+            df.loc[idx, "max_similarity"] = cosine.max(axis=1)
         df["cosine_similarity_to_selected"] = df["max_similarity"]
         df["embedding_distance"] = 1.0 - df["mean_similarity"]
 
