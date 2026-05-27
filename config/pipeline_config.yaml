@@ -150,39 +150,34 @@ ranking:
 
 # Diversity & Bias Mitigation Re-ranking Layer
 reranking:
-  # MMR settings
-  mmr:
-    enabled: true
-    lambda_param: 0.7  # Balance between relevance and diversity (0-1)
-  
-  # Diversity weights
-  weights:
-    diversity: 0.3
-    novelty: 0.2
-    freshness: 0.1
-    coverage: 0.1
-  
+  model: "lambdamart"
+  objective: "lambdarank"
+  metric: "ndcg"
+  boosting_type: "gbdt"
+  num_leaves: 31
+  learning_rate: 0.05
+  n_estimators: 200
+  max_depth: -1
+  feature_fraction: 0.9
+  min_data_in_leaf: 20
+  random_state: 42
+
   # Category balancing
   category_balance:
     enabled: true
     max_same_category: 5
     min_categories: 3
-  
+
   # Seller balancing
   seller_balance:
     enabled: true
     max_same_seller: 3
-  
-  # Price diversity
-  price_diversity:
-    enabled: true
-    price_buckets: 5
-  
+
   # Freshness
   freshness:
     enabled: true
     decay_days: 30
-  
+
   # Final output
   final_top_k: 20
   diversity_tolerance: 0.05  # 5% tolerance

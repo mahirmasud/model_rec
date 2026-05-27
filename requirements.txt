@@ -61,3 +61,6 @@ pytest-cov>=3.0.0
 mypy>=0.950
 typing-extensions>=4.0.0
 ray>=2.0.0
+
+# Learning-to-rank reranker
+lightgbm>=4.0.0
