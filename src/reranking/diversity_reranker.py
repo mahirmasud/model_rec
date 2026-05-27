@@ -172,22 +172,43 @@ class DiversityReranker:
         return df
 
     def _build_training_labels(self, df: pd.DataFrame) -> pd.Series:
+        import pandas as pd
+        import numpy as np
+
+        labels = pd.Series(index=df.index, dtype=float)
+
+        # -------------------------
+        # CASE 1: interaction exists
+        # -------------------------
         if "interaction" in df.columns:
             interaction = pd.to_numeric(df["interaction"], errors="coerce").fillna(0.0)
+
             if interaction.nunique() > 1:
                 per_user_rank = interaction.groupby(df["user_id"]).rank(method="average", pct=True)
-                return np.select(
-                    [per_user_rank >= 0.8, per_user_rank >= 0.5],
-                    [3, 2],
-                    default=1
+
+                labels = np.where(
+                    per_user_rank >= 0.8, 3,
+                    np.where(per_user_rank >= 0.5, 2, 1)
                 )
-        blend = 0.6 * df["ranking_score"] + 0.2 * df["novelty_score"] + 0.2 * df["freshness_score"]
-        per_user_pct = blend.groupby(df["user_id"]).rank(method="average", pct=True)
-        return np.select(
-            [per_user_pct >= 0.8, per_user_pct >= 0.5],
-            [3, 2],
-            default=1
+                return pd.Series(labels, index=df.index)
+
+        # -------------------------
+        # CASE 2: fallback blend
+        # -------------------------
+        blend = (
+            0.6 * df["ranking_score"] +
+            0.2 * df["novelty_score"] +
+            0.2 * df["freshness_score"]
         )
+
+        per_user_pct = blend.groupby(df["user_id"]).rank(method="average", pct=True)
+
+        labels = np.where(
+            per_user_pct >= 0.8, 3,
+            np.where(per_user_pct >= 0.5, 2, 1)
+        )
+
+        return pd.Series(labels, index=df.index)
 
     def fit(self, candidates: pd.DataFrame) -> None:
         df = self.build_feature_matrix(candidates)
