@@ -97,7 +97,6 @@ class RecommendationEngine:
             'policy_source_order': ['config.policy_control', 'context.policy_control', 'policy_inputs'],
             'effective_policy': resolved.__dict__,
         }
-
     def _has_user_history(self, user_id: str) -> bool:
         """Check if user has interaction history."""
         # In production, check against stored user history
