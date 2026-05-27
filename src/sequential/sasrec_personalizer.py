@@ -170,7 +170,7 @@ class SASRecPersonalizer:
                 all_results.append({
                     'user_id': user_id,
                     'item_id': item_id,
-                    'personalization_score': score,
+                    'sequential_score': score,
                     'rank': rank
                 })
         

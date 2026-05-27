@@ -245,35 +245,33 @@ class DeepFMRanker:
             bad_users = var_check[var_check <= 0].index.tolist()[:5]
             raise ValueError(f"Constant score collapse detected for users: {bad_users}")
     
-    def run(self, deepfm_data: Dict[str, Any]) -> Dict[str, Any]:
+    def run(self, deepfm_data: Dict[str, Any], candidates_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
         """Run the complete ranking pipeline."""
         # Train
         self.fit(deepfm_data)
         
-        # Get candidates from previous stage or use all user-item pairs
+        # Use candidates from prior stages when available to preserve retrieval/sequential signals.
         df = deepfm_data['dataframe']
-        
-        # Build candidate pool.
-        users = df['user_id'].unique()[:100]  # Limit for efficiency
-        items = df['item_id'].unique()
-        
-        # Create candidate pairs
-        candidates = []
-        for user in users:
-            seen_items = set(df[df['user_id'] == user]['item_id'].tolist())
-            sample_items = list(np.random.choice(items, min(100, len(items)), replace=False))
-            for item in sample_items:
-                if item in seen_items:
-                    continue
-                candidates.append({'user_id': user, 'item_id': item})
-        
-        candidates_df = pd.DataFrame(candidates)
+        if candidates_df is None or candidates_df.empty:
+            users = df['user_id'].unique()[:100]
+            items = df['item_id'].unique()
+            candidates = []
+            for user in users:
+                seen_items = set(df[df['user_id'] == user]['item_id'].tolist())
+                sample_items = list(np.random.choice(items, min(100, len(items)), replace=False))
+                for item in sample_items:
+                    if item in seen_items:
+                        continue
+                    candidates.append({'user_id': user, 'item_id': item})
+            candidates_df = pd.DataFrame(candidates)
         
         if len(candidates_df) == 0:
             return {'n_ranked': 0, 'ranked_candidates': pd.DataFrame()}
         
         # Rank
         ranked_df = self.rank(candidates_df)
+        if "ranking_score" in ranked_df.columns:
+            ranked_df["deepfm_score"] = ranked_df["ranking_score"]
         
         results = {
             'n_ranked': len(ranked_df),

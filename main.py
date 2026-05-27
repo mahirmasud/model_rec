@@ -190,7 +190,34 @@ def run_pipeline(config: ConfigLoader, mode: str, args):
                 from src.ranking.deepfm_ranker import DeepFMRanker
                 
                 ranker = DeepFMRanker(config, logger)
-                ranking_results = ranker.run(deepfm_data)
+                upstream_candidates = None
+                if mode == "full" and 'retrieval' in results and 'personalization' in results:
+                    retrieval_df = results['retrieval'].get('candidates', pd.DataFrame()).copy()
+                    sequential_df = results['personalization'].get('personalized_candidates', pd.DataFrame()).copy()
+                    if not retrieval_df.empty:
+                        retrieval_df["lightgcn_score"] = retrieval_df["retrieval_score"]
+                    if not retrieval_df.empty and not sequential_df.empty:
+                        upstream_candidates = retrieval_df.merge(
+                            sequential_df[["user_id", "item_id", "sequential_score"]],
+                            on=["user_id", "item_id"],
+                            how="left",
+                        )
+                        upstream_candidates["sequential_score"] = upstream_candidates["sequential_score"].fillna(0.0)
+                    else:
+                        upstream_candidates = retrieval_df
+                ranking_results = ranker.run(deepfm_data, candidates_df=upstream_candidates)
+                if 'ranked_candidates' in ranking_results and not ranking_results['ranked_candidates'].empty:
+                    required_features = ["retrieval_score", "sequential_score", "lightgcn_score", "deepfm_score"]
+                    rdf = ranking_results['ranked_candidates']
+                    if "lightgcn_score" not in rdf.columns and "retrieval_score" in rdf.columns:
+                        rdf["lightgcn_score"] = rdf["retrieval_score"]
+                    if "deepfm_score" not in rdf.columns and "ranking_score" in rdf.columns:
+                        rdf["deepfm_score"] = rdf["ranking_score"]
+                    for col in required_features:
+                        if col not in rdf.columns:
+                            raise ValueError(f"Missing required ranking feature: {col}")
+                        assert rdf[col].sum() > 0, f"Feature {col} is empty or all zeros"
+                    logger.info("Ranking feature stats: %s", rdf[required_features].describe().to_dict())
                 results['ranking'] = ranking_results
         
         # Stage 4: Diversity Re-ranking
@@ -200,6 +227,14 @@ def run_pipeline(config: ConfigLoader, mode: str, args):
                 
                 reranker = DiversityReranker(config, logger)
                 rerank_results = reranker.run(ranking_results)
+                if "final_recommendations" in rerank_results and not rerank_results["final_recommendations"].empty:
+                    fdf = rerank_results["final_recommendations"].sort_values(
+                        ["user_id", "rerank_score"], ascending=[True, False]
+                    ).copy()
+                    fdf["final_rank"] = fdf.groupby("user_id").cumcount() + 1
+                    rerank_results["final_recommendations"] = fdf
+                    logger.info("Rerank score stats: %s", fdf["rerank_score"].describe().to_dict())
+                    logger.info("Per-user rerank variance stats: %s", fdf.groupby("user_id")["rerank_score"].var().describe().to_dict())
                 results['reranking'] = rerank_results
         
         # Evaluation

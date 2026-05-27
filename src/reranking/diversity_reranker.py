@@ -42,6 +42,8 @@ class DiversityReranker:
         )
         self.feature_columns: List[str] = []
         self.item_embeddings: Dict[str, np.ndarray] = {}
+        self.feature_mean: Optional[pd.Series] = None
+        self.feature_std: Optional[pd.Series] = None
 
     @staticmethod
     def _safe_norm(v: np.ndarray) -> np.ndarray:
@@ -144,6 +146,7 @@ class DiversityReranker:
             raise ValueError("No candidates for reranker training")
 
         labels = self._build_training_labels(df)
+        self.logger.info(f"Label distribution: {labels.value_counts().to_dict()}")
         self.feature_columns = [
             "ranking_score", "retrieval_score", "sequential_score", "similarity_score",
             "cosine_similarity_to_selected", "mean_similarity", "max_similarity", "category_repetition_count",
@@ -160,9 +163,9 @@ class DiversityReranker:
             self.logger.info(f"Dropping constant reranker features: {removed}")
         self.feature_columns = non_constant
         x = x[self.feature_columns]
-        mu = x.mean(axis=0)
-        sigma = x.std(axis=0).replace(0.0, 1.0)
-        x = (x - mu) / sigma
+        self.feature_mean = x.mean(axis=0)
+        self.feature_std = x.std(axis=0).replace(0.0, 1.0)
+        x = (x - self.feature_mean) / (self.feature_std + 1e-8)
         group = df.groupby("user_id").size().tolist()
         self.model.fit(x, labels, group=group)
 
@@ -199,9 +202,7 @@ class DiversityReranker:
         self.fit(ranked_candidates)
         features_df = self.build_feature_matrix(ranked_candidates)
         x_pred = features_df[self.feature_columns].fillna(0.0)
-        mu = x_pred.mean(axis=0)
-        sigma = x_pred.std(axis=0).replace(0.0, 1.0)
-        x_pred = (x_pred - mu) / sigma
+        x_pred = (x_pred - self.feature_mean) / (self.feature_std + 1e-8)
         features_df["rerank_score"] = self.model.predict(x_pred)
         final_df = self.apply_constraints(features_df)
 
