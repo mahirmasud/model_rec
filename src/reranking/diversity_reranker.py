@@ -35,8 +35,9 @@ class DiversityReranker:
             learning_rate=float(config.get("reranking.learning_rate", 0.05)),
             n_estimators=int(config.get("reranking.n_estimators", 200)),
             max_depth=int(config.get("reranking.max_depth", -1)),
-            feature_fraction=float(config.get("reranking.feature_fraction", 0.9)),
+            feature_fraction=float(config.get("reranking.feature_fraction", 0.8)),
             min_data_in_leaf=int(config.get("reranking.min_data_in_leaf", 20)),
+            verbosity=int(config.get("reranking.verbosity", -1)),
             random_state=int(config.get("reranking.random_state", 42)),
         )
         self.feature_columns: List[str] = []
@@ -149,9 +150,19 @@ class DiversityReranker:
             "seller_repetition_count", "embedding_distance", "item_popularity", "inverse_popularity",
             "long_tail_indicator", "item_age", "recency_decay", "trending_score",
             "session_diversity_preference", "exploration_tendency", "repeat_interaction_tendency", "sequential_entropy",
-            "category_saturation", "seller_saturation", "duplicate_penalty",
+            "category_saturation", "seller_saturation", "duplicate_penalty", "novelty_score", "freshness_score", "diversity_score",
         ]
         x = df[self.feature_columns].fillna(0.0)
+        nunique = x.nunique(dropna=False)
+        non_constant = nunique[nunique > 1].index.tolist()
+        removed = sorted(set(self.feature_columns) - set(non_constant))
+        if removed:
+            self.logger.info(f"Dropping constant reranker features: {removed}")
+        self.feature_columns = non_constant
+        x = x[self.feature_columns]
+        mu = x.mean(axis=0)
+        sigma = x.std(axis=0).replace(0.0, 1.0)
+        x = (x - mu) / sigma
         group = df.groupby("user_id").size().tolist()
         self.model.fit(x, labels, group=group)
 
@@ -187,12 +198,24 @@ class DiversityReranker:
 
         self.fit(ranked_candidates)
         features_df = self.build_feature_matrix(ranked_candidates)
-        features_df["rerank_score"] = self.model.predict(features_df[self.feature_columns].fillna(0.0))
+        x_pred = features_df[self.feature_columns].fillna(0.0)
+        mu = x_pred.mean(axis=0)
+        sigma = x_pred.std(axis=0).replace(0.0, 1.0)
+        x_pred = (x_pred - mu) / sigma
+        features_df["rerank_score"] = self.model.predict(x_pred)
         final_df = self.apply_constraints(features_df)
 
+        if "deepfm_score" not in final_df.columns:
+            final_df["deepfm_score"] = final_df.get("ranking_score", 0.0)
+        if "sasrec_score" not in final_df.columns:
+            final_df["sasrec_score"] = final_df.get("sequential_score", 0.0)
+        if "lightgcn_score" not in final_df.columns:
+            final_df["lightgcn_score"] = final_df.get("retrieval_score", 0.0)
+
         required_cols = [
-            "user_id", "item_id", "similarity_score", "ranking_score", "rerank_score",
-            "diversity_score", "novelty_score", "freshness_score", "final_rank",
+            "user_id", "item_id", "rerank_score", "final_rank", "ranking_score", "retrieval_score", "sequential_score",
+            "deepfm_score", "sasrec_score", "lightgcn_score", "similarity_score",
+            "diversity_score", "novelty_score", "freshness_score",
         ]
         for c in required_cols:
             if c not in final_df.columns:
