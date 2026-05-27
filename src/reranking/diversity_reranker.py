@@ -1,369 +1,213 @@
 """
-Diversity Reranker - Stage 4: Diversity-aware re-ranking and bias mitigation.
-Implements MMR and other diversity optimization techniques.
+Diversity Reranker - Stage 4: LambdaMART-based learned re-ranking.
+Replaces heuristic MMR with a LightGBM ranker while preserving output schema.
 """
 
-import pandas as pd
-import numpy as np
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+from __future__ import annotations
+
 import logging
-from sklearn.metrics.pairwise import cosine_similarity
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+from lightgbm import LGBMRanker
 
 from ..utils.config_loader import ConfigLoader
 
 
 class DiversityReranker:
-    """
-    Diversity-aware re-ranker for final recommendation optimization.
-    
-    Implements Maximum Marginal Relevance (MMR) and other 
-    diversity/bias mitigation techniques.
-    """
-    
+    """Learned reranker that optimizes final ordering with LambdaMART."""
+
     def __init__(self, config: ConfigLoader, logger: Optional[logging.Logger] = None):
         self.config = config
         self.logger = logger or logging.getLogger(__name__)
-        
-        # MMR parameters
-        self.lambda_param = config.get('reranking.mmr.lambda_param', 0.6)
-        
-        # Diversity weights
-        self.diversity_weight = config.get('reranking.weights.diversity', 0.5)
-        self.novelty_weight = config.get('reranking.weights.novelty', 0.05)
-        self.freshness_weight = config.get('reranking.weights.freshness', 0.05)
-        
-        # Balancing constraints
-        self.max_same_category = config.get('reranking.category_balance.max_same_category', 5)
-        self.min_categories = config.get('reranking.category_balance.min_categories', 3)
-        self.max_same_seller = config.get('reranking.seller_balance.max_same_seller', 3)
-        
-        # Final output
-        self.final_top_k = config.get('reranking.final_top_k', 20)
-    
-    def _compute_diversity_score(self, item_id: str, selected_items: List[str], 
-                                  item_features: Optional[pd.DataFrame] = None) -> float:
-        """Compute diversity score based on dissimilarity to selected items."""
-        if not selected_items or item_features is None:
-            return 0.5
-        
-        # Simple category-based diversity
-        if 'category' in item_features.columns and 'item_id' in item_features.columns:
-            item_cat = item_features[item_features['item_id'] == item_id]['category'].values
-            if len(item_cat) == 0:
-                return 0.5
-            
-            selected_cats = []
-            for sel_item in selected_items[-self.max_same_category:]:
-                sel_cat = item_features[item_features['item_id'] == sel_item]['category'].values
-                if len(sel_cat) > 0:
-                    selected_cats.append(sel_cat[0])
-            
-            # Higher score if category is different from recent selections
-            if item_cat[0] not in selected_cats:
-                return 1.0
-            else:
-                return 0.3
-        
-        return 0.5
-    
-    def _compute_novelty_score(self, item_id: str, user_history: List[str],
-                                item_popularity: Optional[Dict[str, int]] = None) -> float:
-        """Compute novelty score (inverse popularity)."""
-        if item_popularity is None:
-            return 0.5
-        
-        max_pop = max(item_popularity.values()) if item_popularity else 1
-        item_pop = item_popularity.get(item_id, max_pop // 2)
-        
-        # Novelty is inverse of popularity
-        novelty = 1.0 - (item_pop / (max_pop + 1))
-        return novelty
-    
-    def _compute_freshness_score(self, item_id: str, 
-                                   item_features: Optional[pd.DataFrame] = None) -> float:
-        """Compute freshness score based on item recency."""
-        if item_features is None or 'created_date' not in item_features.columns:
-            return 0.5
-        
-        from datetime import datetime
-        item_row = item_features[item_features['item_id'] == item_id]
-        if len(item_row) == 0:
-            return 0.5
-        
-        created = item_row['created_date'].values[0]
-        if isinstance(created, np.datetime64):
-            created = pd.Timestamp(created)
-        
-        age_days = (datetime.now() - created).days
-        # Decay over 30 days
-        freshness = np.exp(-age_days / 30)
-        return freshness
-    
-    def mmr_rerank(self, candidates: pd.DataFrame, 
-                   item_features: Optional[pd.DataFrame] = None,
-                   user_history: Optional[Dict[str, List[str]]] = None) -> pd.DataFrame:
-        """
-        Apply Maximum Marginal Relevance re-ranking.
-        
-        MMR = lambda * relevance - (1-lambda) * diversity
-        """
-        if len(candidates) == 0:
-            return candidates
-        
-        reranked = []
-        remaining = candidates.copy()
-        item_vectors = self._build_item_vectors(remaining, item_features)
-        
-        # Get item popularity for novelty calculation
-        item_popularity = {}
-        if 'item_id' in candidates.columns:
-            item_counts = candidates['item_id'].value_counts().to_dict()
-            item_popularity = item_counts
-        
-        while len(remaining) > 0 and len(reranked) < self.final_top_k:
 
-            selected_ids = [r['item_id'] for r in reranked]
+        self.final_top_k = int(config.get("reranking.final_top_k", 20))
+        self.max_same_category = int(config.get("reranking.category_balance.max_same_category", 5))
+        self.max_same_seller = int(config.get("reranking.seller_balance.max_same_seller", 3))
 
-            best_score = -np.inf
-            best_idx = None
-
-            # -------------------------------
-            # STEP 1: batch build matrices
-            # -------------------------------
-
-            remaining_ids = remaining['item_id'].astype(str).tolist()
-
-            candidate_embeddings = np.vstack([
-                item_vectors[i] for i in remaining_ids
-            ])
-
-            if len(selected_ids) > 0:
-                selected_embeddings = np.vstack([
-                    item_vectors[i] for i in selected_ids if i in item_vectors
-                ])
-            else:
-                selected_embeddings = None
-
-            # -------------------------------
-            # STEP 2: VECTORISED PENALTY
-            # -------------------------------
-
-            if selected_embeddings is None or selected_embeddings.size == 0:
-                penalties = np.zeros(len(remaining_ids))
-            else:
-                sim_matrix = candidate_embeddings @ selected_embeddings.T
-
-                max_sims = np.max(sim_matrix, axis=1)
-                mean_sims = np.mean(sim_matrix, axis=1)
-
-                normalized_max = (max_sims + 1.0) / 2.0
-                normalized_mean = (mean_sims + 1.0) / 2.0
-
-                penalties = (0.7 * normalized_max) + (0.3 * normalized_mean)
-
-            # -------------------------------
-            # STEP 3: vectorised scores
-            # -------------------------------
-
-            relevance_scores = remaining['ranking_score'].values
-
-            novelty_scores = np.array([
-                self._compute_novelty_score(i, [], item_popularity)
-                for i in remaining_ids
-            ])
-
-            freshness_scores = np.array([
-                self._compute_freshness_score(i, item_features)
-                for i in remaining_ids
-            ])
-
-            mmr_scores = (
-                self.lambda_param * relevance_scores
-                - (1 - self.lambda_param) * self.diversity_weight * penalties
-                + self.novelty_weight * novelty_scores
-                + self.freshness_weight * freshness_scores
-            )
-
-            # -------------------------------
-            # STEP 4: select best item
-            # -------------------------------
-
-            best_idx_pos = np.argmax(mmr_scores)
-            best_score = mmr_scores[best_idx_pos]
-            best_idx = remaining.index[best_idx_pos]
-
-            best_row = remaining.loc[best_idx].copy()
-            best_row['mmr_score'] = best_score
-            best_row['diversity_score'] = 1.0 - penalties[best_idx_pos]
-
-            reranked.append(best_row)
-            remaining = remaining.drop(best_idx)
-        
-        if len(reranked) == 0:
-            return pd.DataFrame()
-        
-        result_df = pd.DataFrame(reranked)
-        result_df['final_rank'] = range(1, len(result_df) + 1)
-        return result_df
-
-    def _build_item_vectors(self, candidates: pd.DataFrame, item_features: Optional[pd.DataFrame]) -> Dict[str, np.ndarray]:
-        """Build per-item vectors for diversity similarity calculations."""
-        ids = candidates['item_id'].astype(str).tolist()
-        if item_features is not None and not item_features.empty and 'item_id' in item_features.columns:
-            feats = item_features[item_features['item_id'].astype(str).isin(ids)].copy()
-            if not feats.empty:
-                value_cols = [c for c in feats.columns if c != 'item_id']
-                # encode mixed typed columns
-                enc = pd.get_dummies(feats[value_cols].astype(str), dummy_na=True)
-                vec_map = {iid: vec for iid, vec in zip(feats['item_id'].astype(str), enc.values.astype(float))}
-                return {iid: vec_map.get(iid, self._fallback_vector(iid)) for iid in ids}
-        return {iid: self._fallback_vector(iid) for iid in ids}
-
-    def _fallback_vector(self, item_id: str) -> np.ndarray:
-        rng = np.random.default_rng(abs(hash(item_id)) % (2**32))
-        v = rng.normal(0, 1, 16)
-        return v / (np.linalg.norm(v) + 1e-8)
-
-    def _max_similarity_penalty(
-        self,
-        item_id: str,
-        selected_ids: List[str],
-        item_vectors: Dict[str, np.ndarray]
-    ) -> float:
-
-        if not selected_ids:
-            return 0.5
-
-        current = item_vectors[item_id].reshape(1, -1)
-
-        selected = np.vstack([
-            item_vectors[s]
-            for s in selected_ids
-            if s in item_vectors
-        ])
-
-        if selected.size == 0:
-            return 0.0
-
-        # Raw cosine similarity in [-1, 1]
-        sims = cosine_similarity(current, selected).flatten()
-
-        # Normalize cosine similarity to [0, 1]
-        normalized_sims = (sims + 1.0) / 2.0
-
-        # Use mean similarity instead of max (recommended)
-        penalty = np.mean(normalized_sims)
-
-        return float(np.clip(penalty, 0.0, 1.0))
-    
-    def apply_constraints(self, recommendations: pd.DataFrame,
-                          item_features: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-        """Apply business constraints to recommendations."""
-        if len(recommendations) == 0:
-            return recommendations
-        
-        filtered = []
-        category_counts = {}
-        seller_counts = {}
-        
-        for _, row in recommendations.iterrows():
-            item_id = row['item_id']
-            
-            # Get item attributes
-            category = None
-            seller = None
-            if item_features is not None:
-                item_row = item_features[item_features['item_id'] == item_id]
-                if len(item_row) > 0:
-                    category = item_row['category'].values[0] if 'category' in item_row.columns else None
-                    seller = item_row['brand'].values[0] if 'brand' in item_row.columns else None
-            
-            # Check category constraint
-            if category:
-                current_count = category_counts.get(category, 0)
-                if current_count >= self.max_same_category:
-                    continue
-                category_counts[category] = current_count + 1
-            
-            # Check seller constraint
-            if seller:
-                current_count = seller_counts.get(seller, 0)
-                if current_count >= self.max_same_seller:
-                    continue
-                seller_counts[seller] = current_count + 1
-            
-            filtered.append(row.to_dict())
-        
-        result = pd.DataFrame.from_records(filtered)
-        if len(result) > 0:
-            result['final_rank'] = range(1, len(result) + 1)
-        
-        return result
-    
-    def run(self, ranking_results: Dict[str, Any]) -> Dict[str, Any]:
-        """Run the complete re-ranking pipeline."""
-        self.logger.info("Running diversity re-ranking...")
-        
-        ranked_candidates = ranking_results.get('ranked_candidates', pd.DataFrame())
-        
-        if len(ranked_candidates) == 0:
-            return {
-                'n_final': 0,
-                'final_recommendations': pd.DataFrame(),
-                'diversity_metrics': {}
-            }
-        
-        # Group by user and apply MMR
-        all_recommendations = []
-        
-        for user_id, group in ranked_candidates.groupby('user_id'):
-            user_recs = self.mmr_rerank(group.sort_values('ranking_score', ascending=False).head(50))
-            user_recs['user_id'] = user_id
-            all_recommendations.append(user_recs)
-        
-        if len(all_recommendations) == 0:
-            return {'n_final': 0, 'final_recommendations': pd.DataFrame()}
-        
-        final_df = pd.concat(all_recommendations, ignore_index=True)
-        final_df['ranking_score'] = final_df.groupby('user_id')['ranking_score'].transform(
-            lambda s: s / (s.sum() + 1e-12)
+        self.model = LGBMRanker(
+            objective=config.get("reranking.objective", "lambdarank"),
+            metric=config.get("reranking.metric", "ndcg"),
+            boosting_type=config.get("reranking.boosting_type", "gbdt"),
+            num_leaves=int(config.get("reranking.num_leaves", 31)),
+            learning_rate=float(config.get("reranking.learning_rate", 0.05)),
+            n_estimators=int(config.get("reranking.n_estimators", 200)),
+            max_depth=int(config.get("reranking.max_depth", -1)),
+            feature_fraction=float(config.get("reranking.feature_fraction", 0.9)),
+            min_data_in_leaf=int(config.get("reranking.min_data_in_leaf", 20)),
+            random_state=int(config.get("reranking.random_state", 42)),
         )
-        
-        # Apply constraints
-        final_df = self.apply_constraints(final_df)
-        self.logger.info(f"Final columns: {final_df.columns.tolist()}")
-        
-        # Compute diversity metrics
-        diversity_metrics = self._compute_diversity_metrics(final_df)
-        
-        results = {
-            'n_final': len(final_df),
-            'n_users': final_df['user_id'].nunique() if 'user_id' in final_df.columns else 0,
-            'final_top_k': self.final_top_k,
-            'final_recommendations': final_df,
-            'diversity_metrics': diversity_metrics
-        }
-        
-        self.logger.info(f"Generated {len(final_df)} final recommendations with diversity metrics")
-        return results
-    
-    def _compute_diversity_metrics(self, recommendations: pd.DataFrame) -> Dict[str, float]:
-        """Compute diversity metrics for recommendations."""
-        if len(recommendations) == 0:
+        self.feature_columns: List[str] = []
+        self.item_embeddings: Dict[str, np.ndarray] = {}
+
+    @staticmethod
+    def _safe_norm(v: np.ndarray) -> np.ndarray:
+        n = np.linalg.norm(v, axis=1, keepdims=True)
+        n[n == 0] = 1.0
+        return v / n
+
+    def _build_item_embeddings(self, df: pd.DataFrame) -> Dict[str, np.ndarray]:
+        if "item_id" not in df.columns:
             return {}
-        
-        metrics = {}
-        
-        # Intra-list diversity (ILD)
-        if 'diversity_score' in recommendations.columns:
-            metrics['avg_diversity_score'] = float(recommendations['diversity_score'].mean())
-        
-        # Category coverage
-        metrics['n_unique_items'] = recommendations['item_id'].nunique()
-        
-        # User coverage
-        if 'user_id' in recommendations.columns:
-            metrics['n_users_covered'] = recommendations['user_id'].nunique()
-        
-        return metrics
+        cols = [c for c in ["similarity_score", "ranking_score", "retrieval_score", "sequential_score"] if c in df.columns]
+        if not cols:
+            return {}
+        emb = df.groupby("item_id")[cols].mean().astype(float)
+        arr = self._safe_norm(emb.values)
+        return {item_id: arr[i] for i, item_id in enumerate(emb.index.astype(str).tolist())}
+
+    def _compute_user_behavior_features(self, g: pd.DataFrame) -> Tuple[float, float, float, float]:
+        s = g["ranking_score"].astype(float).values
+        if len(s) == 0:
+            return 0.0, 0.0, 0.0, 0.0
+        p = np.clip(s / (s.sum() + 1e-12), 1e-12, 1.0)
+        entropy = float(-(p * np.log(p)).sum())
+        exploration = float(np.std(s))
+        repeat = float((g["item_popularity"] > g["item_popularity"].median()).mean()) if "item_popularity" in g else 0.0
+        session_div = float(g["category"].nunique() / max(len(g), 1)) if "category" in g else 0.0
+        return session_div, exploration, repeat, entropy
+
+    def build_feature_matrix(self, candidates: pd.DataFrame) -> pd.DataFrame:
+        df = candidates.copy()
+        if df.empty:
+            return df
+
+        for col, default in [("ranking_score", 0.0), ("similarity_score", 0.0), ("retrieval_score", 0.0), ("sequential_score", 0.0)]:
+            if col not in df.columns:
+                df[col] = default
+
+        for meta in ["category", "seller", "brand"]:
+            if meta not in df.columns:
+                df[meta] = "unknown"
+        if "seller" not in df.columns and "brand" in df.columns:
+            df["seller"] = df["brand"].astype(str)
+
+        pop = df["item_id"].value_counts().to_dict()
+        df["item_popularity"] = df["item_id"].map(pop).fillna(1).astype(float)
+        max_pop = max(pop.values()) if pop else 1
+        df["inverse_popularity"] = 1.0 / (df["item_popularity"] + 1.0)
+        df["long_tail_indicator"] = (df["item_popularity"] <= np.median(list(pop.values()) if pop else [1])).astype(int)
+
+        now = datetime.now(timezone.utc)
+        if "created_date" in df.columns:
+            created = pd.to_datetime(df["created_date"], errors="coerce", utc=True)
+            age = (now - created).dt.days.fillna(30).clip(lower=0)
+        else:
+            age = pd.Series(np.full(len(df), 30), index=df.index)
+        df["item_age"] = age.astype(float)
+        decay_days = float(self.config.get("reranking.freshness.decay_days", 30))
+        df["recency_decay"] = np.exp(-df["item_age"] / max(decay_days, 1.0))
+        df["trending_score"] = df["inverse_popularity"] * df["recency_decay"]
+
+        self.item_embeddings = self._build_item_embeddings(df)
+        vectors = np.vstack([self.item_embeddings.get(str(i), np.zeros(4)) for i in df["item_id"].astype(str)])
+        vectors = self._safe_norm(vectors)
+
+        cosine = vectors @ vectors.T
+        np.fill_diagonal(cosine, 0.0)
+        df["mean_similarity"] = cosine.mean(axis=1)
+        df["max_similarity"] = cosine.max(axis=1)
+        df["cosine_similarity_to_selected"] = df["max_similarity"]
+        df["embedding_distance"] = 1.0 - df["mean_similarity"]
+
+        df["category_repetition_count"] = df.groupby(["user_id", "category"]).cumcount()
+        df["seller_repetition_count"] = df.groupby(["user_id", "seller"]).cumcount()
+        df["category_saturation"] = df.groupby("user_id")["category"].transform(lambda s: s.map(s.value_counts()) / len(s))
+        df["seller_saturation"] = df.groupby("user_id")["seller"].transform(lambda s: s.map(s.value_counts()) / len(s))
+        df["duplicate_penalty"] = df.duplicated(["user_id", "item_id"]).astype(int)
+
+        behavior = df.groupby("user_id").apply(self._compute_user_behavior_features)
+        behavior_df = pd.DataFrame(behavior.tolist(), index=behavior.index, columns=[
+            "session_diversity_preference", "exploration_tendency", "repeat_interaction_tendency", "sequential_entropy"
+        ])
+        df = df.merge(behavior_df, left_on="user_id", right_index=True, how="left")
+
+        df["novelty_score"] = df["inverse_popularity"]
+        df["freshness_score"] = df["recency_decay"]
+        df["diversity_score"] = 1.0 - df["max_similarity"].clip(0, 1)
+
+        return df
+
+    def _build_training_labels(self, df: pd.DataFrame) -> pd.Series:
+        if "interaction" in df.columns:
+            return (df["interaction"].astype(float) > 0).astype(int)
+        blend = 0.6 * df["ranking_score"] + 0.2 * df["novelty_score"] + 0.2 * df["freshness_score"]
+        thr = blend.groupby(df["user_id"]).transform("median")
+        return (blend >= thr).astype(int)
+
+    def fit(self, candidates: pd.DataFrame) -> None:
+        df = self.build_feature_matrix(candidates)
+        if df.empty:
+            raise ValueError("No candidates for reranker training")
+
+        labels = self._build_training_labels(df)
+        self.feature_columns = [
+            "ranking_score", "retrieval_score", "sequential_score", "similarity_score",
+            "cosine_similarity_to_selected", "mean_similarity", "max_similarity", "category_repetition_count",
+            "seller_repetition_count", "embedding_distance", "item_popularity", "inverse_popularity",
+            "long_tail_indicator", "item_age", "recency_decay", "trending_score",
+            "session_diversity_preference", "exploration_tendency", "repeat_interaction_tendency", "sequential_entropy",
+            "category_saturation", "seller_saturation", "duplicate_penalty",
+        ]
+        x = df[self.feature_columns].fillna(0.0)
+        group = df.groupby("user_id").size().tolist()
+        self.model.fit(x, labels, group=group)
+
+    def apply_constraints(self, recommendations: pd.DataFrame) -> pd.DataFrame:
+        filtered: List[Dict[str, Any]] = []
+        for user_id, group in recommendations.groupby("user_id"):
+            cat_counts: Dict[str, int] = {}
+            seller_counts: Dict[str, int] = {}
+            user_rows = []
+            for row in group.sort_values("rerank_score", ascending=False).to_dict("records"):
+                cat = str(row.get("category", "unknown"))
+                seller = str(row.get("seller", row.get("brand", "unknown")))
+                if cat_counts.get(cat, 0) >= self.max_same_category:
+                    continue
+                if seller_counts.get(seller, 0) >= self.max_same_seller:
+                    continue
+                cat_counts[cat] = cat_counts.get(cat, 0) + 1
+                seller_counts[seller] = seller_counts.get(seller, 0) + 1
+                user_rows.append(row)
+                if len(user_rows) >= self.final_top_k:
+                    break
+            filtered.extend(user_rows)
+        out = pd.DataFrame(filtered)
+        if not out.empty:
+            out["final_rank"] = out.groupby("user_id")["rerank_score"].rank(ascending=False, method="first").astype(int)
+        return out
+
+    def run(self, ranking_results: Dict[str, Any]) -> Dict[str, Any]:
+        self.logger.info("Running LambdaMART reranking...")
+        ranked_candidates = ranking_results.get("ranked_candidates", pd.DataFrame())
+        if ranked_candidates.empty:
+            return {"n_final": 0, "final_recommendations": pd.DataFrame(), "diversity_metrics": {}}
+
+        self.fit(ranked_candidates)
+        features_df = self.build_feature_matrix(ranked_candidates)
+        features_df["rerank_score"] = self.model.predict(features_df[self.feature_columns].fillna(0.0))
+        final_df = self.apply_constraints(features_df)
+
+        required_cols = [
+            "user_id", "item_id", "similarity_score", "ranking_score", "rerank_score",
+            "diversity_score", "novelty_score", "freshness_score", "final_rank",
+        ]
+        for c in required_cols:
+            if c not in final_df.columns:
+                final_df[c] = 0.0
+        final_df = final_df[required_cols]
+
+        diversity_metrics = {
+            "avg_diversity_score": float(final_df["diversity_score"].mean()) if not final_df.empty else 0.0,
+            "n_unique_items": int(final_df["item_id"].nunique()) if not final_df.empty else 0,
+            "n_users_covered": int(final_df["user_id"].nunique()) if not final_df.empty else 0,
+        }
+        return {
+            "n_final": len(final_df),
+            "n_users": int(final_df["user_id"].nunique()) if not final_df.empty else 0,
+            "final_top_k": self.final_top_k,
+            "final_recommendations": final_df,
+            "diversity_metrics": diversity_metrics,
+        }
