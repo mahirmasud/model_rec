@@ -51,9 +51,6 @@ class MetricsCalculator:
         return metrics
     
     def _recall_at_k(self, recs: pd.DataFrame, truth: pd.DataFrame, k: int) -> float:
-        print("GROUND TRUTH COLUMNS:")
-        print(truth.columns.tolist())
-        print(truth.head())
         """Compute Recall@K."""
         recalls = []
         for user_id in recs['user_id'].unique():
@@ -256,10 +253,11 @@ class MetricsCalculator:
         
         # Create synthetic ground truth for demo
         # In production, this would come from held-out test data
+        # Use up to 5 items per user to avoid sampling errors for small groups.
         ground_truth = (
             final_recs
-            .groupby('user_id')
-            .sample(n=5, replace=False, random_state=42)
+            .groupby('user_id', group_keys=False)
+            .apply(lambda g: g.sample(n=min(5, len(g)), replace=False, random_state=42))
             .reset_index(drop=True)
         )
 
