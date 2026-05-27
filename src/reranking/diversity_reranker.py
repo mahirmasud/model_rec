@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from lightgbm import LGBMRanker
+from sklearn.preprocessing import StandardScaler
 
 from ..utils.config_loader import ConfigLoader
 
@@ -42,8 +43,8 @@ class DiversityReranker:
         )
         self.feature_columns: List[str] = []
         self.item_embeddings: Dict[str, np.ndarray] = {}
-        self.feature_mean: Optional[pd.Series] = None
-        self.feature_std: Optional[pd.Series] = None
+        self.feature_scaler = StandardScaler()
+        self.scaler_fitted = False
 
     @staticmethod
     def _safe_norm(v: np.ndarray) -> np.ndarray:
@@ -60,6 +61,14 @@ class DiversityReranker:
         emb = df.groupby("item_id")[cols].mean().astype(float)
         arr = self._safe_norm(emb.values)
         return {item_id: arr[i] for i, item_id in enumerate(emb.index.astype(str).tolist())}
+
+    @staticmethod
+    def _deterministic_embedding(item_id: str, dim: int) -> np.ndarray:
+        seed = abs(hash(item_id)) % (2**32)
+        rng = np.random.default_rng(seed)
+        v = rng.normal(0, 1.0, dim).astype(float)
+        n = np.linalg.norm(v)
+        return v / (n if n != 0 else 1.0)
 
     def _compute_user_behavior_features(self, g: pd.DataFrame) -> Tuple[float, float, float, float]:
         s = g["ranking_score"].astype(float).values
@@ -80,6 +89,22 @@ class DiversityReranker:
         for col, default in [("ranking_score", 0.0), ("similarity_score", 0.0), ("retrieval_score", 0.0), ("sequential_score", 0.0)]:
             if col not in df.columns:
                 df[col] = default
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(default).astype(float)
+
+        # Stabilize weak / missing SASRec outputs with deterministic fallback per user.
+        seq_sum = df.groupby("user_id")["sequential_score"].transform("sum").abs()
+        weak_seq = seq_sum <= 1e-12
+        if weak_seq.any():
+            df.loc[weak_seq, "sequential_score"] = (
+                0.7 * df.loc[weak_seq, "ranking_score"] + 0.3 * df.loc[weak_seq, "retrieval_score"]
+            )
+
+        # Compress correlated model scores to reduce redundancy.
+        df["ensemble_score"] = (
+            0.4 * df["retrieval_score"] +
+            0.3 * df["sequential_score"] +
+            0.3 * df["ranking_score"]
+        )
 
         for meta in ["category", "seller", "brand"]:
             if meta not in df.columns:
@@ -96,7 +121,9 @@ class DiversityReranker:
         now = datetime.now(timezone.utc)
         if "created_date" in df.columns:
             created = pd.to_datetime(df["created_date"], errors="coerce", utc=True)
-            age = (now - created).dt.days.fillna(30).clip(lower=0)
+            raw_age = (now - created).dt.days
+            fallback_age = float(raw_age.dropna().median()) if raw_age.notna().any() else 30.0
+            age = raw_age.fillna(fallback_age).clip(lower=0)
         else:
             age = pd.Series(np.full(len(df), 30), index=df.index)
         df["item_age"] = age.astype(float)
@@ -106,7 +133,6 @@ class DiversityReranker:
 
         self.item_embeddings = self._build_item_embeddings(df)
         embedding_dim = len(next(iter(self.item_embeddings.values()))) if self.item_embeddings else 4
-        fallback_vector = np.zeros(embedding_dim, dtype=float)
         df["mean_similarity"] = 0.0
         df["max_similarity"] = 0.0
         # SAFETY: Never compute global item-item similarity at catalog scale.
@@ -116,7 +142,7 @@ class DiversityReranker:
             if len(idx) <= 1:
                 continue
             vectors = np.vstack([
-                self.item_embeddings.get(str(item_id), fallback_vector)
+                self.item_embeddings.get(str(item_id), self._deterministic_embedding(str(item_id), embedding_dim))
                 for item_id in g["item_id"].astype(str)
             ])
             vectors = self._safe_norm(vectors)
@@ -147,10 +173,21 @@ class DiversityReranker:
 
     def _build_training_labels(self, df: pd.DataFrame) -> pd.Series:
         if "interaction" in df.columns:
-            return (df["interaction"].astype(float) > 0).astype(int)
+            interaction = pd.to_numeric(df["interaction"], errors="coerce").fillna(0.0)
+            if interaction.nunique() > 1:
+                per_user_rank = interaction.groupby(df["user_id"]).rank(method="average", pct=True)
+                return np.select(
+                    [per_user_rank >= 0.8, per_user_rank >= 0.5],
+                    [3, 2],
+                    default=1
+                )
         blend = 0.6 * df["ranking_score"] + 0.2 * df["novelty_score"] + 0.2 * df["freshness_score"]
-        thr = blend.groupby(df["user_id"]).transform("median")
-        return (blend >= thr).astype(int)
+        per_user_pct = blend.groupby(df["user_id"]).rank(method="average", pct=True)
+        return np.select(
+            [per_user_pct >= 0.8, per_user_pct >= 0.5],
+            [3, 2],
+            default=1
+        )
 
     def fit(self, candidates: pd.DataFrame) -> None:
         df = self.build_feature_matrix(candidates)
@@ -160,7 +197,7 @@ class DiversityReranker:
         labels = self._build_training_labels(df)
         self.logger.info(f"Label distribution: {labels.value_counts().to_dict()}")
         self.feature_columns = [
-            "ranking_score", "retrieval_score", "sequential_score", "similarity_score",
+            "ensemble_score", "similarity_score",
             "cosine_similarity_to_selected", "mean_similarity", "max_similarity", "category_repetition_count",
             "seller_repetition_count", "embedding_distance", "item_popularity", "inverse_popularity",
             "long_tail_indicator", "item_age", "recency_decay", "trending_score",
@@ -175,9 +212,13 @@ class DiversityReranker:
             self.logger.info(f"Dropping constant reranker features: {removed}")
         self.feature_columns = non_constant
         x = x[self.feature_columns]
-        self.feature_mean = x.mean(axis=0)
-        self.feature_std = x.std(axis=0).replace(0.0, 1.0)
-        x = (x - self.feature_mean) / (self.feature_std + 1e-8)
+        corr = x.corr(numeric_only=True).abs()
+        if "ensemble_score" in corr.columns:
+            high_corr = corr.index[(corr["ensemble_score"] > 0.95) & (corr.index != "ensemble_score")].tolist()
+            if high_corr:
+                self.logger.info(f"High-correlation features vs ensemble_score: {high_corr}")
+        x = pd.DataFrame(self.feature_scaler.fit_transform(x), columns=self.feature_columns, index=x.index)
+        self.scaler_fitted = True
         group = df.groupby("user_id").size().tolist()
         self.model.fit(x, labels, group=group)
 
@@ -214,7 +255,9 @@ class DiversityReranker:
         self.fit(ranked_candidates)
         features_df = self.build_feature_matrix(ranked_candidates)
         x_pred = features_df[self.feature_columns].fillna(0.0)
-        x_pred = (x_pred - self.feature_mean) / (self.feature_std + 1e-8)
+        if not self.scaler_fitted:
+            raise RuntimeError("Reranker scaler is not fitted.")
+        x_pred = pd.DataFrame(self.feature_scaler.transform(x_pred), columns=self.feature_columns, index=x_pred.index)
         features_df["rerank_score"] = self.model.predict(x_pred)
         final_df = self.apply_constraints(features_df)
 
