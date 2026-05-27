@@ -251,6 +251,19 @@ evaluation:
     confidence_level: 0.95
 
 # Serving Configuration
+# Policy control wrapper (bounded runtime controls)
+policy_control:
+  recommendation_yield_limit: 20
+  vector_personalization_focus: 60
+  curation_discovery_factor: 25
+  corporate_sponsored_promotions: 0
+  candidate_output_diversity_index: 0.2
+  retrieval_batch_size: 256
+  candidate_search_limit: 300
+  recency_decay_coefficient: 0.8
+  category_capping_threshold: 3
+  promotions_injection_percentile_threshold: 0.9
+
 serving:
   # Real-time settings
   real_time:
