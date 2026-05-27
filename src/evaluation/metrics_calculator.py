@@ -23,6 +23,14 @@ class MetricsCalculator:
         
         self.top_k_list = config.get('evaluation.top_k_list', [5, 10, 20, 50])
     
+
+    def _validate_ground_truth_schema(self, ground_truth: pd.DataFrame) -> None:
+        """Ensure ground truth always includes required identity columns."""
+        required_cols = {"user_id", "item_id"}
+        missing = required_cols.difference(ground_truth.columns)
+        if missing:
+            raise ValueError(f"ground_truth schema invalid. Missing columns: {sorted(missing)}")
+
     def compute_ranking_metrics(self, recommendations: pd.DataFrame,
                                 ground_truth: pd.DataFrame) -> Dict[str, float]:
         """Compute standard ranking metrics."""
@@ -251,19 +259,11 @@ class MetricsCalculator:
             self.logger.warning("No recommendations to evaluate")
             return {'ranking_metrics': {}, 'diversity_metrics': {}, 'bias_metrics': {}}
         
-        # Create synthetic ground truth for demo
-        # In production, this would come from held-out test data
-        # Use up to 5 items per user to avoid sampling errors for small groups.
-        ground_truth = (
-            final_recs
-            .groupby('user_id', group_keys=False)
-            .apply(lambda g: g.sample(n=min(5, len(g)), replace=False, random_state=42))
-            .reset_index(drop=True)
-        )
-
-
-        # Keep only required columns
-        ground_truth = ground_truth[['user_id', 'item_id']]
+        # Create schema-safe ground truth for evaluation.
+        # This preserves mandatory identity columns regardless of transforms.
+        interactions = final_recs.copy()
+        ground_truth = interactions[['user_id', 'item_id']].copy()
+        self._validate_ground_truth_schema(ground_truth)
 
         
         # Ranking metrics
