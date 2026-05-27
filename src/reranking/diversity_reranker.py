@@ -6,6 +6,7 @@ Replaces heuristic MMR with a LightGBM ranker while preserving output schema.
 from __future__ import annotations
 
 import logging
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -64,7 +65,8 @@ class DiversityReranker:
 
     @staticmethod
     def _deterministic_embedding(item_id: str, dim: int) -> np.ndarray:
-        seed = abs(hash(item_id)) % (2**32)
+        digest = hashlib.blake2b(str(item_id).encode("utf-8"), digest_size=8).digest()
+        seed = int.from_bytes(digest, byteorder="big", signed=False) % (2**32)
         rng = np.random.default_rng(seed)
         v = rng.normal(0, 1.0, dim).astype(float)
         n = np.linalg.norm(v)
@@ -119,13 +121,20 @@ class DiversityReranker:
         df["long_tail_indicator"] = (df["item_popularity"] <= np.median(list(pop.values()) if pop else [1])).astype(int)
 
         now = datetime.now(timezone.utc)
-        if "created_date" in df.columns:
-            created = pd.to_datetime(df["created_date"], errors="coerce", utc=True)
-            raw_age = (now - created).dt.days
-            fallback_age = float(raw_age.dropna().median()) if raw_age.notna().any() else 30.0
-            age = raw_age.fillna(fallback_age).clip(lower=0)
+        created_col = None
+        for candidate_col in ["created_date", "timestamp", "created_at", "item_created_date"]:
+            if candidate_col in df.columns:
+                created_col = candidate_col
+                break
+        if created_col is not None:
+            created = pd.to_datetime(df[created_col], errors="coerce", utc=True)
+            raw_age = (now - created).dt.total_seconds() / 86400.0
+            valid_age = raw_age[raw_age.notna()]
+            dynamic_fill = float(valid_age.quantile(0.9)) if not valid_age.empty else 0.0
+            age = raw_age.fillna(dynamic_fill).clip(lower=0)
         else:
-            age = pd.Series(np.full(len(df), 30), index=df.index)
+            # Keep dynamic rather than fixed constant fallback.
+            age = pd.Series(np.linspace(1.0, float(max(len(df), 1)), num=len(df)), index=df.index)
         df["item_age"] = age.astype(float)
         decay_days = float(self.config.get("reranking.freshness.decay_days", 30))
         df["recency_decay"] = np.exp(-df["item_age"] / max(decay_days, 1.0))

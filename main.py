@@ -203,7 +203,19 @@ def run_pipeline(config: ConfigLoader, mode: str, args):
                             on=["user_id", "item_id"],
                             how="left",
                         )
-                        upstream_candidates["sequential_score"] = upstream_candidates["sequential_score"].fillna(0.0)
+                        missing_mask = upstream_candidates["sequential_score"].isna()
+                        if missing_mask.any():
+                            score_updates = {}
+                            for uid, grp in upstream_candidates[missing_mask].groupby("user_id"):
+                                item_ids = grp["item_id"].astype(str).tolist()
+                                score_updates.update({(uid, iid): s for iid, s in personalizer.score_candidates(uid, item_ids).items()})
+                            upstream_candidates.loc[missing_mask, "sequential_score"] = [
+                                score_updates.get((row.user_id, str(row.item_id)), 0.0)
+                                for row in upstream_candidates.loc[missing_mask, ["user_id", "item_id"]].itertuples(index=False)
+                            ]
+                        upstream_candidates["sequential_score"] = pd.to_numeric(
+                            upstream_candidates["sequential_score"], errors="coerce"
+                        ).fillna(0.0)
                     else:
                         upstream_candidates = retrieval_df
                 ranking_results = ranker.run(deepfm_data, candidates_df=upstream_candidates)
@@ -217,7 +229,7 @@ def run_pipeline(config: ConfigLoader, mode: str, args):
                     for col in required_features:
                         if col not in rdf.columns:
                             raise ValueError(f"Missing required ranking feature: {col}")
-                        assert rdf[col].sum() > 0, f"Feature {col} is empty or all zeros"
+                        assert rdf[col].abs().sum() > 0, f"Feature {col} is empty or all zeros"
                     logger.info("Ranking feature stats: %s", rdf[required_features].describe().to_dict())
                 results['ranking'] = ranking_results
         

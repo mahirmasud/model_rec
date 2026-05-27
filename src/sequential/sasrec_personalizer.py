@@ -33,6 +33,21 @@ class SASRecPersonalizer:
         self.item_embeddings = None
         self.position_embeddings = None
         self.user_sequences = {}
+
+    def _build_user_representation(self, seq_items: List[str]) -> Optional[np.ndarray]:
+        """Build normalized user representation from sequence items."""
+        if not seq_items or not self.item_embeddings:
+            return None
+        attention_weights = self._attention_score(seq_items, len(seq_items))
+        user_repr = np.zeros(self.hidden_size)
+        valid = 0
+        for i, item in enumerate(seq_items[-self.max_seq_length:]):
+            if item in self.item_embeddings and i < len(attention_weights):
+                user_repr += attention_weights[i] * self.item_embeddings[item]
+                valid += 1
+        if valid == 0:
+            return None
+        return user_repr / (np.linalg.norm(user_repr) + 1e-8)
     
     def _create_item_embeddings(self, interactions: pd.DataFrame) -> Dict[str, np.ndarray]:
         """Create item embeddings based on co-occurrence."""
@@ -84,22 +99,9 @@ class SASRecPersonalizer:
         if not seq_items or not self.item_embeddings:
             return {}
         
-        # Get attention weights
-        attention_weights = self._attention_score(seq_items, len(seq_items))
-        
-        # Compute weighted sum of item embeddings (user representation)
-        user_repr = np.zeros(self.hidden_size)
-        valid_items = []
-        for i, item in enumerate(seq_items[-self.max_seq_length:]):
-            if item in self.item_embeddings and i < len(attention_weights):
-                user_repr += attention_weights[i] * self.item_embeddings[item]
-                valid_items.append(item)
-        
-        if not valid_items:
+        user_repr = self._build_user_representation(seq_items)
+        if user_repr is None:
             return {}
-        
-        # L2 normalize
-        user_repr = user_repr / (np.linalg.norm(user_repr) + 1e-8)
         
         # Score all items
         scores = {}
@@ -111,6 +113,29 @@ class SASRecPersonalizer:
             scores[item_id] = score
         
         return scores
+
+    def score_candidates(self, user_id: str, item_ids: List[str], context: Optional[List[str]] = None) -> Dict[str, float]:
+        """Score specific candidate items for a user to align SASRec with retrieval set."""
+        if context:
+            seq_items = context
+        elif user_id in self.user_sequences:
+            seq_items = self.user_sequences[user_id].get("items", [])
+        else:
+            seq_items = []
+        user_repr = self._build_user_representation(seq_items)
+        if user_repr is None:
+            return {str(i): 0.0 for i in item_ids}
+        out: Dict[str, float] = {}
+        for item_id in item_ids:
+            emb = self.item_embeddings.get(item_id)
+            if emb is None:
+                out[item_id] = 0.0
+                continue
+            s = float(np.dot(user_repr, emb))
+            if item_id in seq_items:
+                s *= 0.1
+            out[item_id] = s
+        return out
     
     def fit(self, sequences_data: Dict[str, Any]) -> 'SASRecPersonalizer':
         """Train SASRec model on sequences."""

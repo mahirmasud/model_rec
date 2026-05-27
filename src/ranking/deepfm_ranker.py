@@ -267,6 +267,22 @@ class DeepFMRanker:
         
         if len(candidates_df) == 0:
             return {'n_ranked': 0, 'ranked_candidates': pd.DataFrame()}
+
+        # Enrich candidates with metadata and interaction signals for reranking.
+        feature_df = df.copy()
+        keep_cols = [
+            c for c in ["user_id", "item_id", "rating", "interaction", "timestamp", "created_date", "category", "seller", "brand"]
+            if c in feature_df.columns
+        ]
+        if keep_cols:
+            pair_meta = feature_df[keep_cols].drop_duplicates(subset=["user_id", "item_id"], keep="last")
+            item_meta_cols = [c for c in keep_cols if c not in {"user_id", "item_id", "rating", "interaction", "timestamp"}]
+            item_meta = feature_df[["item_id"] + item_meta_cols].drop_duplicates(subset=["item_id"], keep="last") if item_meta_cols else None
+            candidates_df = candidates_df.merge(pair_meta, on=["user_id", "item_id"], how="left")
+            if item_meta is not None:
+                candidates_df = candidates_df.merge(item_meta, on="item_id", how="left", suffixes=("", "_item"))
+            if "rating" in candidates_df.columns and "interaction" not in candidates_df.columns:
+                candidates_df["interaction"] = candidates_df["rating"]
         
         # Rank
         ranked_df = self.rank(candidates_df)
