@@ -88,6 +88,15 @@ class RecommendationEngine:
             resolved.update(policy_inputs)
         return PolicyEngine.resolve(resolved)
 
+    def explain_policy_resolution(self,
+                                  context: Optional[Dict[str, Any]] = None,
+                                  policy_inputs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Explain how policy inputs are resolved into safe bounded values."""
+        resolved = self._resolve_policy_inputs(context=context, policy_inputs=policy_inputs)
+        return {
+            'policy_source_order': ['config.policy_control', 'context.policy_control', 'policy_inputs'],
+            'effective_policy': resolved.__dict__,
+        }
     def _has_user_history(self, user_id: str) -> bool:
         """Check if user has interaction history."""
         # In production, check against stored user history
